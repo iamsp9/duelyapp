@@ -1,115 +1,121 @@
 "use client";
 
-import { useMemo } from "react";
-
 import {
   useVaultStore,
 } from "@/stores/vault-store";
 
+import {
+  getSummary,
+} from "@/lib/engine/cards";
+
+function formatINR(
+  value: number
+) {
+  return new Intl.NumberFormat(
+    "en-IN",
+    {
+      maximumFractionDigits: 0,
+    }
+  ).format(value);
+}
+
 export function SummaryCards() {
-  const bills =
+  const cards =
     useVaultStore(
-      (state) =>
-        state.vault.bills || []
+      (s) =>
+        s.vault.cards
     );
 
   const summary =
-    useMemo(() => {
-      const billed =
-        bills.reduce(
-          (sum, bill) =>
-            sum + bill.amount,
-          0
-        );
+    getSummary(cards);
 
-      const paid =
-        bills.reduce(
-          (sum, bill) =>
-            sum +
-            bill.paidAmount,
-          0
-        );
+  const items = [
+    {
+      label: "Billed",
 
-      const outstanding =
-        billed - paid;
+      value:
+        "₹" +
+        formatINR(
+          summary.billed
+        ),
 
-      const progress =
-        billed
-          ? Math.round(
-              (paid / billed) *
-                100
-            )
-          : 0;
+      color:
+        "text-white",
+    },
 
-      return {
-        billed,
-        paid,
-        outstanding,
-        progress,
-      };
-    }, [bills]);
+    {
+      label: "Paid",
+
+      value:
+        "₹" +
+        formatINR(
+          summary.paid
+        ),
+
+      color:
+        "text-emerald-400",
+    },
+
+    {
+      label:
+        "Outstanding",
+
+      value:
+        "₹" +
+        formatINR(
+          summary.outstanding
+        ),
+
+      color:
+        "text-red-400",
+    },
+
+    {
+      label:
+        "Progress",
+
+      value:
+        summary.progress +
+        "%",
+
+      color:
+        "text-white",
+
+      progress:
+        summary.progress,
+    },
+  ];
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-      <Card
-        title="Billed"
-        value={`₹${summary.billed.toLocaleString()}`}
-      />
+    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+      {items.map((item) => (
+        <div
+          key={item.label}
+          className="rounded-3xl border border-white/10 bg-[#111827] p-5"
+        >
+          <div className="text-xs uppercase tracking-wider text-slate-500">
+            {item.label}
+          </div>
 
-      <Card
-        title="Paid"
-        value={`₹${summary.paid.toLocaleString()}`}
-        valueClass="text-green-500"
-      />
-
-      <Card
-        title="Outstanding"
-        value={`₹${summary.outstanding.toLocaleString()}`}
-        valueClass="text-red-500"
-      />
-
-      <div className="rounded-3xl border border-white/10 bg-card p-5 col-span-2 lg:col-span-1">
-        <p className="text-xs uppercase tracking-wide text-slate-500">
-          Progress
-        </p>
-
-        <p className="text-3xl font-bold mt-2">
-          {summary.progress}%
-        </p>
-
-        <div className="mt-4 h-2 rounded-full bg-white/10 overflow-hidden">
           <div
-            className="h-full bg-green-500 rounded-full"
-            style={{
-              width: `${summary.progress}%`,
-            }}
-          />
+            className={`mt-3 text-4xl font-bold ${item.color}`}
+          >
+            {item.value}
+          </div>
+
+          {item.progress !==
+            undefined && (
+            <div className="mt-5 h-2 overflow-hidden rounded-full bg-white/10">
+              <div
+                className="h-full rounded-full bg-emerald-400"
+                style={{
+                  width: `${item.progress}%`,
+                }}
+              />
+            </div>
+          )}
         </div>
-      </div>
-    </div>
-  );
-}
-
-function Card({
-  title,
-  value,
-  valueClass,
-}: {
-  title: string;
-  value: string;
-  valueClass?: string;
-}) {
-  return (
-    <div className="rounded-3xl border border-white/10 bg-card p-5">
-      <p className="text-xs uppercase tracking-wide text-slate-500">
-        {title}
-      </p>
-
-      <p
-        className={`text-3xl font-bold mt-2 ${valueClass || ""}`}
-      >
-        {value}
-      </p>
+      ))}
     </div>
   );
 }

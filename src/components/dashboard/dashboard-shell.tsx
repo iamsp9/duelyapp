@@ -2,14 +2,11 @@
 
 import {
   Bell,
-  CreditCard,
-  Settings,
-  BarChart3,
 } from "lucide-react";
 
 import {
-  useUIStore,
-} from "@/stores/ui-store";
+  MobileNav,
+} from "@/components/layout/mobile-nav";
 
 interface Props {
   children: React.ReactNode;
@@ -18,81 +15,33 @@ interface Props {
 export function DashboardShell({
   children,
 }: Props) {
-  const setModal =
-    useUIStore(
-      (state) => state.setModal
-    );
-
   return (
-    <main className="min-h-screen bg-background text-white pb-32">
-      <header className="sticky top-0 z-40 border-b border-white/10 bg-[#0b1020]/80 backdrop-blur-2xl">
-        <div className="max-w-7xl mx-auto h-16 px-4 flex items-center justify-between">
-          <div className="flex items-center gap-2 font-semibold text-lg">
-            💳 Duely
+    <main className="min-h-screen bg-[#020817] text-white">
+      <header className="sticky top-0 z-40 border-b border-white/10 bg-[#020817]/90 backdrop-blur-2xl">
+        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4">
+          <div className="flex items-center gap-3">
+            <div className="rounded-xl bg-blue-500/15 p-2 text-blue-400">
+              💳
+            </div>
+
+            <div>
+              <div className="text-lg font-semibold">
+                Duely
+              </div>
+            </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <IconButton
-              icon={
-                <Bell className="size-5" />
-              }
-            />
-
-            <IconButton
-              icon={
-                <CreditCard className="size-5" />
-              }
-              onClick={() =>
-                setModal("cards")
-              }
-            />
-
-            <IconButton
-              icon={
-                <BarChart3 className="size-5" />
-              }
-              onClick={() =>
-                setModal(
-                  "reports"
-                )
-              }
-            />
-
-            <IconButton
-              icon={
-                <Settings className="size-5" />
-              }
-              onClick={() =>
-                setModal(
-                  "settings"
-                )
-              }
-            />
-          </div>
+          <button className="flex size-10 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
+            <Bell className="size-5 text-slate-300" />
+          </button>
         </div>
       </header>
 
-      <div className="max-w-7xl mx-auto px-4 py-6">
+      <section className="mx-auto max-w-7xl px-4 py-6 pb-28">
         {children}
-      </div>
+      </section>
+
+      <MobileNav />
     </main>
-  );
-}
-
-function IconButton({
-  icon,
-  onClick,
-}: {
-  icon: React.ReactNode;
-
-  onClick?: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className="size-10 rounded-2xl border border-white/10 bg-white/5 flex items-center justify-center hover:bg-white/10 transition"
-    >
-      {icon}
-    </button>
   );
 }

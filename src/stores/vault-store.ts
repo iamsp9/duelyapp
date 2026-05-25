@@ -1,91 +1,235 @@
+"use client";
+
 import { create } from "zustand";
 
-import { Card } from "@/types/card";
+import type {
+  CreditCard,
+  PaymentStatus,
+} from "@/types/card";
 
-type VaultState = {
-  cards: Card[];
+interface VaultState {
+  vault: {
+    cards: CreditCard[];
+  };
 
   addCard: (
-    card: Card
+    card: CreditCard
   ) => void;
 
   updateCard: (
-    id: string,
-    data: Partial<Card>
+    cardId: string,
+    updates: Partial<CreditCard>
   ) => void;
 
   deleteCard: (
-    id: string
+    cardId: string
   ) => void;
 
-  addPayment: (
+  saveBill: (
+    cardId: string,
+    amount: number
+  ) => void;
+
+  logPayment: (
     cardId: string,
     amount: number,
     note?: string
   ) => void;
-};
+}
 
 export const useVaultStore =
-  create<VaultState>((set) => ({
-    cards: [],
+  create<VaultState>(
+    (set) => ({
+      vault: {
+        cards: [],
+      },
 
-    addCard: (card) =>
-      set((state) => ({
-        cards: [
-          ...state.cards,
-          card,
-        ],
-      })),
+      addCard: (card) =>
+        set((state) => ({
+          vault: {
+            ...state.vault,
 
-    updateCard: (id, data) =>
-      set((state) => ({
-        cards: state.cards.map((c) =>
-          c.id === id
-            ? {
-                ...c,
-                ...data,
-              }
-            : c
-        ),
-      })),
-
-    deleteCard: (id) =>
-      set((state) => ({
-        cards: state.cards.filter(
-          (c) => c.id !== id
-        ),
-      })),
-
-    addPayment: (
-      cardId,
-      amount,
-      note
-    ) =>
-      set((state) => ({
-        cards: state.cards.map((c) => {
-          if (c.id !== cardId) {
-            return c;
-          }
-
-          return {
-            ...c,
-
-            history: [
-              ...c.history,
-
-              {
-                amount,
-                note,
-                date:
-                  new Date()
-                    .toISOString()
-                    .slice(0, 10),
-
-                ts:
-                  new Date().toISOString(),
-              },
+            cards: [
+              ...state.vault.cards,
+              card,
             ],
-          };
-        }),
-      })),
-  }));
+          },
+        })),
+
+      updateCard: (
+        cardId,
+        updates
+      ) =>
+        set((state) => ({
+          vault: {
+            ...state.vault,
+
+            cards:
+              state.vault.cards.map(
+                (card) =>
+                  card.id ===
+                  cardId
+                    ? {
+                        ...card,
+                        ...updates,
+                      }
+                    : card
+              ),
+          },
+        })),
+
+      deleteCard: (
+        cardId
+      ) =>
+        set((state) => ({
+          vault: {
+            ...state.vault,
+
+            cards:
+              state.vault.cards.filter(
+                (c) =>
+                  c.id !==
+                  cardId
+              ),
+          },
+        })),
+
+      saveBill: (
+        cardId,
+        amount
+      ) =>
+        set((state) => ({
+          vault: {
+            ...state.vault,
+
+            cards:
+              state.vault.cards.map(
+                (card) => {
+                  if (
+                    card.id !==
+                    cardId
+                  ) {
+                    return card;
+                  }
+
+                  const outstanding =
+                    amount -
+                    card.paidAmount;
+
+                  let status: PaymentStatus =
+                    "unpaid";
+
+                  if (
+                    outstanding <=
+                    0
+                  ) {
+                    status =
+                      "paid";
+                  } else if (
+                    card.paidAmount >
+                    0
+                  ) {
+                    status =
+                      "partial";
+                  }
+
+                  return {
+                    ...card,
+
+                    totalBill:
+                      amount,
+
+                    outstandingAmount:
+                      Math.max(
+                        0,
+                        outstanding
+                      ),
+
+                    status,
+                  };
+                }
+              ),
+          },
+        })),
+
+      logPayment: (
+        cardId,
+        amount,
+        note
+      ) =>
+        set((state) => ({
+          vault: {
+            ...state.vault,
+
+            cards:
+              state.vault.cards.map(
+                (card) => {
+                  if (
+                    card.id !==
+                    cardId
+                  ) {
+                    return card;
+                  }
+
+                  const paid =
+                    card.paidAmount +
+                    amount;
+
+                  const outstanding =
+                    Math.max(
+                      0,
+                      card.totalBill -
+                        paid
+                    );
+
+                  let status: PaymentStatus =
+                    "unpaid";
+
+                  if (
+                    outstanding ===
+                    0 &&
+                    card.totalBill >
+                      0
+                  ) {
+                    status =
+                      "paid";
+                  } else if (
+                    paid > 0
+                  ) {
+                    status =
+                      "partial";
+                  }
+
+                  return {
+                    ...card,
+
+                    paidAmount:
+                      paid,
+
+                    outstandingAmount:
+                      outstanding,
+
+                    status,
+
+                    payments: [
+                      ...card.payments,
+
+                      {
+                        id:
+                          crypto.randomUUID(),
+
+                        amount,
+
+                        note,
+
+                        createdAt:
+                          new Date().toISOString(),
+                      },
+                    ],
+                  };
+                }
+              ),
+          },
+        })),
+    })
+  );

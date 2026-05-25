@@ -1,26 +1,27 @@
+"use client";
+
 import { create } from "zustand";
 
-type ModalType =
+export type AppTab =
+  | "home"
   | "cards"
-  | "backup"
-  | "settings"
   | "reports"
-  | null;
+  | "settings";
 
-interface UIState {
-  activeModal: ModalType;
+interface UIStore {
+  tab: AppTab;
 
-  setModal: (
-    modal: ModalType
+  setTab: (
+    tab: AppTab
   ) => void;
 }
 
 export const useUIStore =
-  create<UIState>((set) => ({
-    activeModal: null,
+  create<UIStore>((set) => ({
+    tab: "home",
 
-    setModal: (modal) =>
+    setTab: (tab) =>
       set({
-        activeModal: modal,
+        tab,
       }),
   }));

@@ -1,32 +1,36 @@
-export type PaymentHistory = {
-  amount?: number;
-  note?: string;
-  date?: string;
-  text?: string;
-  ts: string;
-};
-
-export type CardStatus =
-  | "paid"
+export type PaymentStatus =
+  | "unpaid"
   | "partial"
-  | "unpaid";
+  | "paid";
 
-export type Card = {
+export interface Payment {
+  id: string;
+
+  amount: number;
+
+  note?: string;
+
+  createdAt: string;
+}
+
+export interface CreditCard {
   id: string;
 
   name: string;
 
   billDay: number;
 
+  dueAfterDays: number;
+
   dueDay: number;
 
-  totalBill: string;
+  totalBill: number;
 
-  status?: CardStatus;
+  paidAmount: number;
 
-  statusOverride?: CardStatus;
+  outstandingAmount: number;
 
-  notes?: string;
+  status: PaymentStatus;
 
-  history: PaymentHistory[];
-};
+  payments: Payment[];
+}

@@ -1,70 +1,113 @@
 "use client";
 
-import Link from "next/link";
-import { usePathname } from "next/navigation";
 import {
-  LayoutGrid,
+  Home,
   CreditCard,
   BarChart3,
   Settings,
 } from "lucide-react";
 
-const items = [
+import {
+  useUIStore,
+  type AppTab,
+} from "@/stores/ui-store";
+
+const items: {
+  key: AppTab;
+
+  label: string;
+
+  icon: React.ReactNode;
+}[] = [
   {
-    href: "/dashboard",
+    key: "home",
+
     label: "Home",
-    icon: LayoutGrid,
+
+    icon: (
+      <Home className="size-5" />
+    ),
   },
+
   {
-    href: "/cards",
+    key: "cards",
+
     label: "Cards",
-    icon: CreditCard,
+
+    icon: (
+      <CreditCard className="size-5" />
+    ),
   },
+
   {
-    href: "/reports",
+    key: "reports",
+
     label: "Reports",
-    icon: BarChart3,
+
+    icon: (
+      <BarChart3 className="size-5" />
+    ),
   },
+
   {
-    href: "/settings",
+    key: "settings",
+
     label: "Settings",
-    icon: Settings,
+
+    icon: (
+      <Settings className="size-5" />
+    ),
   },
 ];
 
 export function MobileNav() {
-  const pathname = usePathname();
+  const tab =
+    useUIStore(
+      (s) => s.tab
+    );
+
+  const setTab =
+    useUIStore(
+      (s) => s.setTab
+    );
 
   return (
-    <nav className="fixed bottom-0 inset-x-0 z-50 border-t border-white/10 bg-black/40 backdrop-blur-2xl">
-      <div className="grid grid-cols-4 h-16">
+    <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-white/10 bg-[#020817]/95 backdrop-blur-2xl">
+      <div className="mx-auto grid max-w-2xl grid-cols-4">
         {items.map((item) => {
-          const active = pathname === item.href;
+          const active =
+            tab === item.key;
 
           return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="flex flex-col items-center justify-center gap-1"
+            <button
+              key={item.key}
+              onClick={() =>
+                setTab(
+                  item.key
+                )
+              }
+              className="flex flex-col items-center justify-center gap-1 py-3"
             >
-              <item.icon
-                className={`size-5 ${
+              <div
+                className={`transition ${
                   active
-                    ? "text-blue-500"
+                    ? "text-blue-400"
                     : "text-slate-500"
                 }`}
-              />
+              >
+                {item.icon}
+              </div>
 
               <span
-                className={`text-[11px] ${
+                className={`text-xs ${
                   active
-                    ? "text-blue-500"
+                    ? "text-blue-400"
                     : "text-slate-500"
                 }`}
               >
                 {item.label}
               </span>
-            </Link>
+            </button>
           );
         })}
       </div>
