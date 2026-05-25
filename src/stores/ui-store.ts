@@ -22,6 +22,10 @@ interface UIStore {
 
   isBackupOpen: boolean;
   setBackupOpen: (open: boolean) => void;
+
+  // Modern UI Delete confirmation toggle
+  isDeleteConfirmOpen: boolean;
+  setDeleteConfirmOpen: (open: boolean) => void;
 }
 
 export const useUIStore = create<UIStore>((set) => ({
@@ -42,4 +46,7 @@ export const useUIStore = create<UIStore>((set) => ({
 
   isBackupOpen: false,
   setBackupOpen: (open) => set({ isBackupOpen: open }),
+
+  isDeleteConfirmOpen: false,
+  setDeleteConfirmOpen: (open) => set({ isDeleteConfirmOpen: open }),
 }));

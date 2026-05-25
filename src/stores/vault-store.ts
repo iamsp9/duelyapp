@@ -12,10 +12,12 @@ interface VaultState {
   secret: string | null;
   salt: string | null;
   mode: string | null;
+  cryptoKey: CryptoKey | null; // Caches the non-extractable Web Crypto API key
   hydrated: boolean;
 
   // Setters
   setAuth: (secret: string, salt: string, mode: string) => void;
+  setCryptoKey: (key: CryptoKey) => void;
   setHydrated: (hydrated: boolean) => void;
   setVault: (vault: { cards: CreditCard[] }) => void;
 
@@ -33,9 +35,12 @@ export const useVaultStore = create<VaultState>((set) => ({
   secret: null,
   salt: null,
   mode: null,
+  cryptoKey: null,
   hydrated: false,
 
-  setAuth: (secret, salt, mode) => set({ secret, salt, mode }),
+  // Reset the cached key when new auth data is set
+  setAuth: (secret, salt, mode) => set({ secret, salt, mode, cryptoKey: null }),
+  setCryptoKey: (cryptoKey) => set({ cryptoKey }),
   setHydrated: (hydrated) => set({ hydrated }),
   setVault: (vault) => set({ vault }),
 
