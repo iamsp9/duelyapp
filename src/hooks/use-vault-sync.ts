@@ -1,3 +1,4 @@
+// src/hooks/use-vault-sync.ts
 "use client";
 
 import { useEffect, useRef } from "react";
@@ -9,7 +10,8 @@ import { deriveKey } from "@/lib/crypto/kdf";
 import type { VaultMode } from "@/types/vault";
 
 export function useVaultSync() {
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // FIXED: Changed NodeJS.Timeout to ReturnType<typeof setTimeout> for environment-agnostic type safety
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const vault = useVaultStore((state) => state.vault);
   const secret = useVaultStore((state) => state.secret);
@@ -34,20 +36,16 @@ export function useVaultSync() {
 
         let activeKey = cryptoKey;
 
-        // PERFORMANCE & SECURITY FIX:
-        // Derive the key once, import as non-extractable CryptoKey, and cache it.
-        // This prevents main-thread blocking and mitigates XSS key extraction.
         if (!activeKey) {
           console.log("Deriving master key (first time)...");
           const saltBytes = decodeSalt(salt);
           const rawKeyBytes = await deriveKey(secret, saltBytes);
           
-          // Import as a non-extractable key bound for both encrypt and decrypt
           activeKey = await crypto.subtle.importKey(
             "raw",
             rawKeyBytes,
             "AES-GCM",
-            false, // extractable: false prevents malicious XSS extraction
+            false, 
             ["encrypt", "decrypt"]
           );
           
@@ -55,7 +53,7 @@ export function useVaultSync() {
         }
 
         const encrypted = await createVault(
-          activeKey, // Bypass slow derivation, pass the instant CryptoKey
+          activeKey, 
           mode as VaultMode,
           vault,
           salt

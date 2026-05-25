@@ -6,13 +6,11 @@ export async function encryptData(
 ) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
 
-  // Determine if we need to convert raw bytes to a CryptoKey, 
-  // or if a ready-to-use CryptoKey was passed in.
   const cryptoKey =
     key instanceof Uint8Array
       ? await crypto.subtle.importKey(
           "raw",
-          key,
+          key as BufferSource, // FIXED
           "AES-GCM",
           false,
           ["encrypt"]
@@ -22,10 +20,7 @@ export async function encryptData(
   const encoded = new TextEncoder().encode(JSON.stringify(data));
 
   const ciphertext = await crypto.subtle.encrypt(
-    {
-      name: "AES-GCM",
-      iv,
-    },
+    { name: "AES-GCM", iv },
     cryptoKey,
     encoded
   );
@@ -45,7 +40,7 @@ export async function decryptData<T>(
     key instanceof Uint8Array
       ? await crypto.subtle.importKey(
           "raw",
-          key,
+          key as BufferSource, // FIXED
           "AES-GCM",
           false,
           ["decrypt"]
@@ -53,10 +48,7 @@ export async function decryptData<T>(
       : key;
 
   const decrypted = await crypto.subtle.decrypt(
-    {
-      name: "AES-GCM",
-      iv: fromBase64(iv),
-    },
+    { name: "AES-GCM", iv: fromBase64(iv) },
     cryptoKey,
     fromBase64(ciphertext)
   );

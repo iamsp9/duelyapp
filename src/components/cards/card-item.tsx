@@ -2,16 +2,16 @@
 
 import { useState } from "react";
 import { useVaultStore } from "@/stores/vault-store";
-import { 
-  getDueBadge, computeStatus, isActive, getPaidTotal, formatCurrency, getGlowClass 
+import {
+  getDueBadge, computeStatus, isActive, getPaidTotal, formatCurrency, getGlowClass
 } from "@/lib/engine/cards";
 import type { CreditCard } from "@/types/card";
-import { 
-  ChevronDown, 
-  X, 
-  Clock, 
-  Check, 
-  Save, 
+import {
+  ChevronDown,
+  X,
+  Clock,
+  Check,
+  Save,
   Plus,
   Trash2
 } from "lucide-react";
@@ -31,7 +31,7 @@ export function CardItem({ card }: Props) {
   const active = isActive(card);
   const status = computeStatus(card);
   const glowClass = getGlowClass(card, active);
-  
+
   const dotCls = status === 'unpaid' ? 'bg-red-500' : status === 'partial' ? 'bg-orange-500' : 'bg-green-500';
   const billStr = card.totalBill !== '' && card.totalBill != null ? formatCurrency(card.totalBill) : '—';
   const tp = getPaidTotal(card);
@@ -63,7 +63,7 @@ export function CardItem({ card }: Props) {
       setNoteVal("");
     }
 
-    updates.logOnly = `${new Date().toLocaleString('en-IN', {day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}: bill set ${formatCurrency(billVal || 0)}`;
+    updates.logOnly = `${new Date().toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}: bill set ${formatCurrency(billVal || 0)}`;
 
     saveCardState(card.id, updates);
   };
@@ -79,7 +79,7 @@ export function CardItem({ card }: Props) {
   };
 
   const setOverride = (st: string) => {
-    saveCardState(card.id, { statusOverride: st });
+    saveCardState(card.id, { statusOverride: st as import("@/types/card").PaymentStatus });
   };
 
   return (
@@ -105,28 +105,28 @@ export function CardItem({ card }: Props) {
           <div className="grid grid-cols-2 gap-2 mb-2.5">
             <div className="flex flex-col gap-1">
               <label className="text-xs font-medium text-slate-400">Total bill (₹)</label>
-              <input 
-                type="number" 
-                inputMode="decimal" 
-                value={billVal} 
-                onChange={e => setBillVal(e.target.value)} 
-                className="bg-[#1a2234] border border-white/10 rounded-[10px] p-2.5 text-[15px] text-white focus:border-blue-500 outline-none w-full [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" 
-                placeholder="0" 
+              <input
+                type="number"
+                inputMode="decimal"
+                value={billVal}
+                onChange={e => setBillVal(e.target.value)}
+                className="bg-[#1a2234] border border-white/10 rounded-[10px] p-2.5 text-[15px] text-white focus:border-blue-500 outline-none w-full [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                placeholder="0"
               />
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-xs font-medium text-slate-400">Add payment (₹)</label>
-              <input 
-                type="number" 
+              <input
+                type="number"
                 min="0"
-                inputMode="decimal" 
-                value={payVal} 
+                inputMode="decimal"
+                value={payVal}
                 onChange={e => {
-                  if (e.target.value.includes('-')) return; 
+                  if (e.target.value.includes('-')) return;
                   setPayVal(e.target.value);
-                }} 
-                className="bg-[#1a2234] border border-white/10 rounded-[10px] p-2.5 text-[15px] text-white focus:border-blue-500 outline-none w-full [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" 
-                placeholder="0" 
+                }}
+                className="bg-[#1a2234] border border-white/10 rounded-[10px] p-2.5 text-[15px] text-white focus:border-blue-500 outline-none w-full [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                placeholder="0"
               />
             </div>
           </div>
@@ -144,20 +144,20 @@ export function CardItem({ card }: Props) {
           <div className="mb-2 min-h-[18px]">{renderStatusPreview()}</div>
 
           <div className="flex gap-1.5 mb-2.5">
-            <button 
-              onClick={() => setOverride('unpaid')} 
+            <button
+              onClick={() => setOverride('unpaid')}
               className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-[10px] border text-[11px] font-semibold transition-all active:scale-95 min-h-[40px] ${status === 'unpaid' ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-transparent border-white/10 text-slate-400 hover:bg-white/5'}`}
             >
               <X className="size-3.5" /> Unpaid
             </button>
-            <button 
-              onClick={() => setOverride('partial')} 
+            <button
+              onClick={() => setOverride('partial')}
               className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-[10px] border text-[11px] font-semibold transition-all active:scale-95 min-h-[40px] ${status === 'partial' ? 'bg-orange-500/10 border-orange-500/20 text-orange-400' : 'bg-transparent border-white/10 text-slate-400 hover:bg-white/5'}`}
             >
               <Clock className="size-3.5" /> Partial
             </button>
-            <button 
-              onClick={() => setOverride('paid')} 
+            <button
+              onClick={() => setOverride('paid')}
               className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-[10px] border text-[11px] font-semibold transition-all active:scale-95 min-h-[40px] ${status === 'paid' ? 'bg-green-500/10 border-green-500/20 text-green-400' : 'bg-transparent border-white/10 text-slate-400 hover:bg-white/5'}`}
             >
               <Check className="size-3.5" /> Paid

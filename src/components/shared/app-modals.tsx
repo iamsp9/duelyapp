@@ -98,7 +98,9 @@ export function AppModals() {
     try {
       const newEncryptedVault = await createVault(newPin, "pin", vault);
       await saveVault(newEncryptedVault);
-      setAuth(newPin, newEncryptedVault.metadata.salt, "pin");
+      
+      // FIXED: Assert metadata!
+      setAuth(newPin, newEncryptedVault.metadata!.salt, "pin"); 
       
       showToast("Master PIN changed successfully!", "success");
       setProfileView('menu');

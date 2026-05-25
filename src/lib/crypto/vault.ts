@@ -35,7 +35,8 @@ export async function unlockVault<T>(
   secretOrKey: string | CryptoKey | Uint8Array,
   vault: EncryptedVault
 ): Promise<T> {
-  const salt = decodeSalt(vault.metadata.salt);
+  // FIXED: Assert metadata is defined (!)
+  const salt = decodeSalt(vault.metadata!.salt);
 
   const key =
     typeof secretOrKey === "string"

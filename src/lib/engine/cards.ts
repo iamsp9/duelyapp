@@ -1,3 +1,4 @@
+// src/lib/engine/cards.ts
 import type { CreditCard, PaymentStatus } from "@/types/card";
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -58,8 +59,8 @@ export function computeStatus(card: CreditCard): PaymentStatus {
   const bill = Number(card.totalBill || 0);
   const total = getPaidTotal(card);
 
-  // Req 5: If the bill is 0 or negative, automatically mark as paid
-  if (card.totalBill !== '' && card.totalBill !== null && bill <= 0) return 'paid';
+  // FIXED: Removed the invalid `!== null` check as it violates the interface type bounds
+  if (card.totalBill !== '' && bill <= 0) return 'paid';
   if (bill > 0 && total >= bill) return 'paid';
   if (total > 0) return 'partial';
   return 'unpaid';

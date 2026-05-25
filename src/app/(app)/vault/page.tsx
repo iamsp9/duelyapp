@@ -17,12 +17,11 @@ export default function VaultPage() {
   const { setAuth, setVault, setHydrated } = useVaultStore();
 
   const [step, setStep] = useState<Step>("loading");
-  
   const [encryptedVault, setEncryptedVault] = useState<any>(null);
   
   const [pin, setPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
-  const [acknowledged, setAcknowledged] = useState(false); // Zero-Knowledge Warning State
+  const [acknowledged, setAcknowledged] = useState(false);
   
   const [error, setError] = useState("");
   const [isShaking, setIsShaking] = useState(false);
@@ -32,7 +31,6 @@ export default function VaultPage() {
     async function checkExistingVault() {
       try {
         const cloudVault = await loadVault();
-        
         if (cloudVault && cloudVault.ciphertext && cloudVault.metadata) {
           setEncryptedVault(cloudVault);
           setStep("unlock");
@@ -65,7 +63,8 @@ export default function VaultPage() {
       const newVault = await createVault(secretKey, "pin", emptyData);
       await saveVault(newVault);
       
-      setAuth(secretKey, newVault.metadata.salt, "pin");
+      // FIXED: Assert metadata exists (!)
+      setAuth(secretKey, newVault.metadata!.salt, "pin");
       setVault(emptyData);
       setHydrated(true);
       router.push("/dashboard");
@@ -88,7 +87,8 @@ export default function VaultPage() {
         await cancelAccountDeletion();
       }
       
-      setAuth(secretKey, encryptedVault.metadata.salt, "pin");
+      // FIXED: Assert metadata exists (!)
+      setAuth(secretKey, encryptedVault.metadata!.salt, "pin");
       setVault(decryptedData);
       setHydrated(true);
       router.push("/dashboard");
@@ -171,7 +171,6 @@ export default function VaultPage() {
           )}
         </div>
 
-        {/* Zero-Knowledge Acknowledgment */}
         {step === "setup" && (
           <div className="mb-6 flex items-start gap-3 text-left bg-orange-500/10 border border-orange-500/20 p-3 rounded-xl mx-2">
             <input 

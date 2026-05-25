@@ -1,31 +1,38 @@
+// src/stores/vault-store.ts
 "use client";
 
 import { create } from "zustand";
 import type { CreditCard, PaymentStatus } from "@/types/card";
 import { computeStatus } from "@/lib/engine/cards";
 
+// FIXED: typed the update payload strictly to avoid `any`
+export interface SaveCardUpdates extends Partial<CreditCard> {
+  newPayment?: {
+    amount?: number;
+    note?: string;
+    date?: string;
+  };
+  logOnly?: string;
+}
+
 interface VaultState {
-  // Vault Data
   vault: { cards: CreditCard[] };
   
-  // Crypto & Sync State (Required for useVaultSync)
   secret: string | null;
   salt: string | null;
   mode: string | null;
-  cryptoKey: CryptoKey | null; // Caches the non-extractable Web Crypto API key
+  cryptoKey: CryptoKey | null; 
   hydrated: boolean;
 
-  // Setters
   setAuth: (secret: string, salt: string, mode: string) => void;
   setCryptoKey: (key: CryptoKey) => void;
   setHydrated: (hydrated: boolean) => void;
   setVault: (vault: { cards: CreditCard[] }) => void;
 
-  // Card Actions
   addCard: (card: CreditCard) => void;
   updateCard: (cardId: string, updates: Partial<CreditCard>) => void;
   deleteCard: (cardId: string) => void;
-  saveCardState: (cardId: string, updates: any) => void;
+  saveCardState: (cardId: string, updates: SaveCardUpdates) => void;
   deleteHistoryItem: (cardId: string, index: number) => void;
 }
 
@@ -38,7 +45,6 @@ export const useVaultStore = create<VaultState>((set) => ({
   cryptoKey: null,
   hydrated: false,
 
-  // Reset the cached key when new auth data is set
   setAuth: (secret, salt, mode) => set({ secret, salt, mode, cryptoKey: null }),
   setCryptoKey: (cryptoKey) => set({ cryptoKey }),
   setHydrated: (hydrated) => set({ hydrated }),
@@ -82,21 +88,24 @@ export const useVaultStore = create<VaultState>((set) => ({
               date: updates.newPayment.date,
               ts: new Date().toISOString()
             });
-            statusOverride = undefined; // Clear override on new payment
+            statusOverride = undefined; 
           }
+          
           if (updates.logOnly) {
             history.push({ text: updates.logOnly, ts: new Date().toISOString() });
           }
           
-          const updatedCard = { ...card, ...updates, history, statusOverride };
+          // Remove custom metadata before merging so we maintain CreditCard exact type format if necessary
+          const { newPayment, logOnly, ...baseUpdates } = updates;
+          const updatedCard = { ...card, ...baseUpdates, history, statusOverride };
           
           if (!statusOverride) {
-             updatedCard.status = computeStatus(updatedCard);
+             updatedCard.status = computeStatus(updatedCard as CreditCard);
           } else {
              updatedCard.status = statusOverride;
           }
 
-          return updatedCard;
+          return updatedCard as CreditCard;
         }),
       },
     })),
@@ -111,9 +120,9 @@ export const useVaultStore = create<VaultState>((set) => ({
           history.splice(index, 1);
           
           const updatedCard = { ...card, history, statusOverride: undefined };
-          updatedCard.status = computeStatus(updatedCard);
+          updatedCard.status = computeStatus(updatedCard as CreditCard);
           
-          return updatedCard;
+          return updatedCard as CreditCard;
         }),
       },
     })),
