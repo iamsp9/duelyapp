@@ -1,36 +1,28 @@
-export type PaymentStatus =
-  | "unpaid"
-  | "partial"
-  | "paid";
+export type PaymentStatus = "unpaid" | "partial" | "paid";
 
-export interface Payment {
-  id: string;
-
-  amount: number;
-
+export interface PaymentHistoryItem {
+  amount?: number;
   note?: string;
-
-  createdAt: string;
+  date?: string;
+  ts?: string;
+  text?: string;
 }
 
 export interface CreditCard {
   id: string;
-
   name: string;
-
   billDay: number;
-
   dueAfterDays: number;
-
   dueDay: number;
-
-  totalBill: number;
-
-  paidAmount: number;
-
-  outstandingAmount: number;
-
+  
+  totalBill: number | string; // Supports empty string like the vanilla input
+  paidAmount?: number;
+  outstandingAmount?: number;
+  
   status: PaymentStatus;
-
-  payments: Payment[];
+  statusOverride?: PaymentStatus;
+  
+  notes?: string;
+  history?: PaymentHistoryItem[];
+  payments?: any[]; // Keep for backwards compatibility if needed
 }
