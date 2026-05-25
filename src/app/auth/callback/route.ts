@@ -8,26 +8,18 @@ export async function GET(request: Request) {
 
   if (code) {
     const supabase = await createClient();
-
     await supabase.auth.exchangeCodeForSession(code);
   }
 
   // Force correct redirect origin
-  const forwardedHost =
-    request.headers.get("x-forwarded-host");
-
-  const protocol =
-    process.env.NODE_ENV === "development"
-      ? "https"
-      : "https";
+  const forwardedHost = request.headers.get("x-forwarded-host");
+  const protocol = process.env.NODE_ENV === "development" ? "http" : "https";
 
   if (forwardedHost) {
-    return NextResponse.redirect(
-      `${protocol}://${forwardedHost}/dashboard`
-    );
+    // Redirect to the Vault (Lock Screen) instead of dashboard
+    return NextResponse.redirect(`${protocol}://${forwardedHost}/vault`);
   }
 
-  return NextResponse.redirect(
-    `${requestUrl.origin}/dashboard`
-  );
+  // Redirect to the Vault (Lock Screen) instead of dashboard
+  return NextResponse.redirect(`${requestUrl.origin}/vault`);
 }

@@ -1,14 +1,10 @@
 "use client";
 
-import {
-  Settings,
-  Database,
-  UserCircle
-} from "lucide-react";
-
+import { Settings, Database, UserCircle } from "lucide-react";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { useUIStore } from "@/stores/ui-store";
 import { CardModals } from "@/components/cards/card-modals";
+import { AppModals } from "@/components/shared/app-modals";
 import { useVaultSync } from "@/hooks/use-vault-sync";
 
 interface Props {
@@ -16,10 +12,9 @@ interface Props {
 }
 
 export function DashboardShell({ children }: Props) {
-  const setManageCardsOpen = useUIStore((s) => s.setManageCardsOpen);
+  const { setManageCardsOpen, setProfileOpen, setBackupOpen } = useUIStore();
 
-  // 🔐 Mount the Sync Engine: Watches state, encrypts locally, pushes to Supabase
-  useVaultSync();
+  useVaultSync(); // 🔐 Cloud Sync Engine
 
   return (
     <main className="min-h-screen bg-[#020817] text-white">
@@ -32,16 +27,27 @@ export function DashboardShell({ children }: Props) {
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
+            {/* Manage Cards Settings */}
             <button 
               onClick={() => setManageCardsOpen(true)}
               className="flex size-9 items-center justify-center rounded-[10px] border border-white/10 bg-transparent text-slate-400 transition-all active:bg-white/5"
             >
               <Settings className="size-[18px]" />
             </button>
-            <button className="flex size-9 items-center justify-center rounded-[10px] border border-white/10 bg-transparent text-slate-400 transition-all active:bg-white/5">
+            
+            {/* Backup / Restore Modal */}
+            <button 
+              onClick={() => setBackupOpen(true)}
+              className="flex size-9 items-center justify-center rounded-[10px] border border-white/10 bg-transparent text-slate-400 transition-all active:bg-white/5"
+            >
               <Database className="size-[18px]" />
             </button>
-            <button className="flex size-9 items-center justify-center rounded-[10px] border border-white/10 bg-transparent text-slate-400 transition-all active:bg-white/5">
+            
+            {/* Profile / Sign Out Modal */}
+            <button 
+              onClick={() => setProfileOpen(true)}
+              className="flex size-9 items-center justify-center rounded-[10px] border border-white/10 bg-transparent text-slate-400 transition-all active:bg-white/5"
+            >
               <UserCircle className="size-[18px]" />
             </button>
           </div>
@@ -54,8 +60,9 @@ export function DashboardShell({ children }: Props) {
 
       <MobileNav />
       
-      {/* Global Modals for Forms */}
+      {/* Global Modals */}
       <CardModals />
+      <AppModals />
     </main>
   );
 }

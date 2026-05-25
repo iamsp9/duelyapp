@@ -2,11 +2,7 @@
 
 import { create } from "zustand";
 
-export type AppTab =
-  | "home"
-  | "cards"
-  | "reports"
-  | "settings";
+export type AppTab = "home" | "cards" | "reports" | "settings";
 
 interface UIStore {
   tab: AppTab;
@@ -20,6 +16,12 @@ interface UIStore {
 
   editingCardId: string | null;
   setEditingCardId: (id: string | null) => void;
+
+  isProfileOpen: boolean;
+  setProfileOpen: (open: boolean) => void;
+
+  isBackupOpen: boolean;
+  setBackupOpen: (open: boolean) => void;
 }
 
 export const useUIStore = create<UIStore>((set) => ({
@@ -34,4 +36,10 @@ export const useUIStore = create<UIStore>((set) => ({
 
   editingCardId: null,
   setEditingCardId: (id) => set({ editingCardId: id }),
+
+  isProfileOpen: false,
+  setProfileOpen: (open) => set({ isProfileOpen: open }),
+
+  isBackupOpen: false,
+  setBackupOpen: (open) => set({ isBackupOpen: open }),
 }));
