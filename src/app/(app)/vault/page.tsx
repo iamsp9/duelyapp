@@ -22,12 +22,12 @@ export default function VaultPage() {
   
   const [pin, setPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
+  const [acknowledged, setAcknowledged] = useState(false); // Zero-Knowledge Warning State
   
   const [error, setError] = useState("");
   const [isShaking, setIsShaking] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // Check cloud for existing encrypted records on mount
   useEffect(() => {
     async function checkExistingVault() {
       try {
@@ -56,14 +56,12 @@ export default function VaultPage() {
     setConfirmPin("");
   };
 
-  // Setup first-time keys with PIN
   const handleSetup = useCallback(async (secretKey: string) => {
     setIsProcessing(true);
     setError("");
 
     try {
       const emptyData = { cards: [] };
-      
       const newVault = await createVault(secretKey, "pin", emptyData);
       await saveVault(newVault);
       
@@ -78,7 +76,6 @@ export default function VaultPage() {
     }
   }, [router, setAuth, setHydrated, setVault]);
 
-  // Unlock existing record
   const handleUnlock = useCallback(async (secretKey: string) => {
     if (!encryptedVault) return;
     setIsProcessing(true);
@@ -87,7 +84,6 @@ export default function VaultPage() {
     try {
       const decryptedData = await unlockVault<any>(secretKey, encryptedVault);
       
-      // Cancel any scheduled deletion upon successful login/unlock to reactivate
       if (encryptedVault.metadata?.delete_scheduled_at) {
         await cancelAccountDeletion();
       }
@@ -104,7 +100,7 @@ export default function VaultPage() {
   }, [encryptedVault, router, setAuth, setHydrated, setVault]);
 
   const handlePinInput = useCallback((val: string) => {
-    if (isProcessing) return;
+    if (isProcessing || (step === "setup" && !acknowledged)) return;
     setError("");
     const current = step === "confirm" ? confirmPin : pin;
     const setter = step === "confirm" ? setConfirmPin : setPin;
@@ -132,7 +128,7 @@ export default function VaultPage() {
         }
       }
     }
-  }, [confirmPin, isProcessing, pin, step, handleSetup, handleUnlock]);
+  }, [confirmPin, isProcessing, pin, step, acknowledged, handleSetup, handleUnlock]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -175,7 +171,23 @@ export default function VaultPage() {
           )}
         </div>
 
-        <div className="mb-6">
+        {/* Zero-Knowledge Acknowledgment */}
+        {step === "setup" && (
+          <div className="mb-6 flex items-start gap-3 text-left bg-orange-500/10 border border-orange-500/20 p-3 rounded-xl mx-2">
+            <input 
+              type="checkbox" 
+              id="ack" 
+              checked={acknowledged} 
+              onChange={(e) => setAcknowledged(e.target.checked)}
+              className="mt-1 shrink-0 accent-orange-500 size-4 cursor-pointer"
+            />
+            <label htmlFor="ack" className="text-[11.5px] text-orange-400/90 leading-relaxed cursor-pointer select-none">
+              <strong>Zero-Knowledge Security:</strong> I understand that my Master PIN is used to locally encrypt my data. <strong>If I forget this PIN, my vault cannot be recovered by anyone</strong>, including Duely.
+            </label>
+          </div>
+        )}
+
+        <div className={cn("mb-6 transition-opacity duration-300", step === "setup" && !acknowledged && "opacity-30 pointer-events-none")}>
           <div className={cn("flex justify-center gap-3.5 mb-6 transition-transform", isShaking && "translate-x-[-8px] animate-in shake duration-100")}>
             {[...Array(6)].map((_, i) => (
               <div key={i} className={cn("w-3.5 h-3.5 rounded-full border-2 transition-all duration-200", (step === "confirm" ? confirmPin : pin).length > i ? "bg-blue-500 border-blue-500 scale-110 shadow-[0_0_8px_rgba(59,130,246,0.5)]" : "border-white/20 bg-transparent")} />
