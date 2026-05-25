@@ -1,31 +1,9 @@
-import type {
-  CreditCard,
-} from "@/types/card";
+import type { CreditCard } from "@/types/card";
+import { isActive, sortByDue, computeStatus } from "./cards";
 
-export function isCardActive(
-  card: CreditCard
-) {
-  const today =
-    new Date().getDate();
-
-  return (
-    today >= card.billDay
+export function getDashboardCards(cards: CreditCard[]) {
+  // Matches the index.html renderDashboard() logic
+  return sortByDue(
+    cards.filter(c => isActive(c) && computeStatus(c) !== "paid")
   );
-}
-
-export function getDashboardCards(
-  cards: CreditCard[]
-) {
-  return cards
-    .filter(isCardActive)
-    .filter(
-      (card) =>
-        card.status !==
-        "paid"
-    )
-    .sort(
-      (a, b) =>
-        a.dueDay -
-        b.dueDay
-    );
 }
