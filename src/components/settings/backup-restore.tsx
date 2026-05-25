@@ -2,6 +2,7 @@
 
 import { useState, useRef } from "react";
 import { useVaultStore } from "@/stores/vault-store";
+import { CheckCircle2, AlertCircle } from "lucide-react";
 
 export function BackupRestoreSettings() {
   // Pull state and setter from Zustand
@@ -14,8 +15,16 @@ export function BackupRestoreSettings() {
   const [action, setAction] = useState<"backup" | "restore" | null>(null);
   const [error, setError] = useState("");
   
+  // Custom Toast State
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+
   // Ref for the hidden file input
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const showToast = (message: string, type: "success" | "error") => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3500);
+  };
 
   const handleInitiateBackup = () => {
     setAction("backup");
@@ -35,7 +44,7 @@ export function BackupRestoreSettings() {
   const handlePinSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (pinInput !== secret) {
-      setError("Incorrect PIN. Please try again.");
+      setError("Incorrect Master PIN. Please try again.");
       return;
     }
 
@@ -65,9 +74,11 @@ export function BackupRestoreSettings() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      
+      showToast("Backup file exported successfully.", "success");
     } catch (err) {
       console.error("Backup failed", err);
-      alert("Failed to create backup file.");
+      showToast("Failed to create backup file.", "error");
     }
   };
 
@@ -77,7 +88,7 @@ export function BackupRestoreSettings() {
     if (!file) return;
 
     if (!file.name.endsWith(".duely")) {
-      alert("Invalid file format. Please select a .duely backup file.");
+      showToast("Invalid file format. Please select a .duely backup file.", "error");
       return;
     }
 
@@ -91,10 +102,10 @@ export function BackupRestoreSettings() {
       }
 
       setVault(parsedData);
-      alert("Vault restored successfully!");
+      showToast("Vault restored successfully!", "success");
     } catch (err) {
       console.error("Restore failed", err);
-      alert("Failed to restore data. The file might be corrupted or invalid.");
+      showToast("Failed to restore data. The file might be corrupted or invalid.", "error");
     } finally {
       // Reset the file input so the same file can be uploaded again if needed
       if (fileInputRef.current) {
@@ -104,7 +115,19 @@ export function BackupRestoreSettings() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 relative">
+      {/* Toast Notification */}
+      {toast && (
+        <div className="absolute -top-12 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-lg bg-neutral-900 border border-neutral-800 px-4 py-3 shadow-lg animate-in slide-in-from-top-2 duration-300 w-max max-w-[90%] whitespace-nowrap">
+          {toast.type === "success" ? (
+            <CheckCircle2 className="size-5 text-green-500" />
+          ) : (
+            <AlertCircle className="size-5 text-red-500" />
+          )}
+          <span className="text-[13px] font-medium text-white">{toast.message}</span>
+        </div>
+      )}
+
       {/* Disclaimer Section */}
       <div className="rounded-lg border border-orange-500/30 bg-orange-500/10 p-4 text-sm text-orange-400">
         <h4 className="font-semibold mb-1 flex items-center gap-2">
@@ -145,7 +168,7 @@ export function BackupRestoreSettings() {
       {/* PIN Verification Modal */}
       {showPinModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-sm rounded-xl border border-neutral-800 bg-neutral-900 p-6 shadow-2xl">
+          <div className="w-full max-w-sm rounded-xl border border-neutral-800 bg-[#020817] p-6 shadow-2xl">
             <h3 className="text-lg font-semibold text-white mb-2">
               Enter Master PIN
             </h3>
@@ -157,11 +180,13 @@ export function BackupRestoreSettings() {
                 type="password"
                 value={pinInput}
                 onChange={(e) => setPinInput(e.target.value)}
-                className="w-full rounded-lg border border-neutral-700 bg-neutral-950 px-4 py-2 text-white focus:border-white focus:outline-none focus:ring-1 focus:ring-white"
-                placeholder="Enter PIN"
+                className="w-full rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 text-center tracking-widest text-lg"
+                placeholder="••••••"
+                maxLength={6}
+                inputMode="numeric"
                 autoFocus
               />
-              {error && <p className="text-sm text-red-500">{error}</p>}
+              {error && <p className="text-sm text-red-500 text-center">{error}</p>}
               
               <div className="flex justify-end gap-3 mt-6">
                 <button

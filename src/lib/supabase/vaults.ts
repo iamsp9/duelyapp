@@ -44,5 +44,56 @@ export async function loadVault() {
     throw error;
   }
 
-  return data; // Returns matches for EncryptedVault { ciphertext, iv, metadata } or null
+  return data;
+}
+
+// Schedules account for deletion by adding a timestamp 7 days into the future
+export async function scheduleAccountDeletion() {
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const { data: vault } = await supabase
+    .from("vaults")
+    .select("metadata")
+    .eq("user_id", user.id)
+    .single();
+  
+  if (vault) {
+    const deleteAt = new Date();
+    deleteAt.setDate(deleteAt.getDate() + 7);
+    const newMetadata = { ...vault.metadata, delete_scheduled_at: deleteAt.toISOString() };
+    
+    const { error } = await supabase
+      .from("vaults")
+      .update({ metadata: newMetadata })
+      .eq("user_id", user.id);
+      
+    if (error) throw error;
+  }
+}
+
+// Reactivates the account if the user logs back in during the 7-day window
+export async function cancelAccountDeletion() {
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return;
+
+  const { data: vault } = await supabase
+    .from("vaults")
+    .select("metadata")
+    .eq("user_id", user.id)
+    .single();
+  
+  if (vault && vault.metadata?.delete_scheduled_at) {
+    const newMetadata = { ...vault.metadata };
+    delete newMetadata.delete_scheduled_at;
+    
+    const { error } = await supabase
+      .from("vaults")
+      .update({ metadata: newMetadata })
+      .eq("user_id", user.id);
+      
+    if (error) throw error;
+  }
 }

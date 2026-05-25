@@ -3,16 +3,13 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { createVault, unlockVault } from "@/lib/crypto/vault";
-import { saveVault, loadVault } from "@/lib/supabase/vaults";
+import { saveVault, loadVault, cancelAccountDeletion } from "@/lib/supabase/vaults";
 import { useVaultStore } from "@/stores/vault-store";
 import { useAuth } from "@/hooks/use-auth";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
 import { Lock, LogOut, ShieldAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type Step = "loading" | "unlock" | "setup" | "confirm";
-type Mode = "pin" | "passphrase";
 
 export default function VaultPage() {
   const router = useRouter();
@@ -20,13 +17,11 @@ export default function VaultPage() {
   const { setAuth, setVault, setHydrated } = useVaultStore();
 
   const [step, setStep] = useState<Step>("loading");
-  const [mode, setMode] = useState<Mode>("pin");
   
   const [encryptedVault, setEncryptedVault] = useState<any>(null);
   
   const [pin, setPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
-  const [passphrase, setPassphrase] = useState("");
   
   const [error, setError] = useState("");
   const [isShaking, setIsShaking] = useState(false);
@@ -40,7 +35,6 @@ export default function VaultPage() {
         
         if (cloudVault && cloudVault.ciphertext && cloudVault.metadata) {
           setEncryptedVault(cloudVault);
-          setMode(cloudVault.metadata.mode || "pin");
           setStep("unlock");
         } else {
           setStep("setup");
@@ -62,7 +56,7 @@ export default function VaultPage() {
     setConfirmPin("");
   };
 
-  // Setup first-time keys matching parameters exactly
+  // Setup first-time keys with PIN
   const handleSetup = useCallback(async (secretKey: string) => {
     setIsProcessing(true);
     setError("");
@@ -70,10 +64,10 @@ export default function VaultPage() {
     try {
       const emptyData = { cards: [] };
       
-      const newVault = await createVault(secretKey, mode, emptyData);
+      const newVault = await createVault(secretKey, "pin", emptyData);
       await saveVault(newVault);
       
-      setAuth(secretKey, newVault.metadata.salt, mode);
+      setAuth(secretKey, newVault.metadata.salt, "pin");
       setVault(emptyData);
       setHydrated(true);
       router.push("/dashboard");
@@ -82,9 +76,9 @@ export default function VaultPage() {
     } finally {
       setIsProcessing(false);
     }
-  }, [mode, router, setAuth, setHydrated, setVault]);
+  }, [router, setAuth, setHydrated, setVault]);
 
-  // Unlock existing record matching arguments perfectly
+  // Unlock existing record
   const handleUnlock = useCallback(async (secretKey: string) => {
     if (!encryptedVault) return;
     setIsProcessing(true);
@@ -93,16 +87,21 @@ export default function VaultPage() {
     try {
       const decryptedData = await unlockVault<any>(secretKey, encryptedVault);
       
-      setAuth(secretKey, encryptedVault.metadata.salt, encryptedVault.metadata.mode);
+      // Cancel any scheduled deletion upon successful login/unlock to reactivate
+      if (encryptedVault.metadata?.delete_scheduled_at) {
+        await cancelAccountDeletion();
+      }
+      
+      setAuth(secretKey, encryptedVault.metadata.salt, "pin");
       setVault(decryptedData);
       setHydrated(true);
       router.push("/dashboard");
     } catch (err) {
-      triggerError(`Incorrect ${mode === 'pin' ? 'PIN' : 'Passphrase'}. Please try again.`);
+      triggerError("Incorrect Master PIN. Please try again.");
     } finally {
       setIsProcessing(false);
     }
-  }, [encryptedVault, mode, router, setAuth, setHydrated, setVault]);
+  }, [encryptedVault, router, setAuth, setHydrated, setVault]);
 
   const handlePinInput = useCallback((val: string) => {
     if (isProcessing) return;
@@ -137,20 +136,14 @@ export default function VaultPage() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (mode !== "pin" || e.target instanceof HTMLInputElement) return;
+      if (e.target instanceof HTMLInputElement) return;
       if (e.key >= '0' && e.key <= '9') handlePinInput(e.key);
       if (e.key === 'Backspace') handlePinInput('backspace');
       if (e.key === 'Escape') handlePinInput('clear');
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [mode, handlePinInput]);
-
-  const handlePassphraseSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!passphrase.trim() || isProcessing) return;
-    step === "setup" ? handleSetup(passphrase) : handleUnlock(passphrase);
-  };
+  }, [handlePinInput]);
 
   if (step === "loading") {
     return (
@@ -168,12 +161,12 @@ export default function VaultPage() {
             {step === "unlock" ? <Lock className="size-8 text-blue-400" /> : <ShieldAlert className="size-8 text-green-400" />}
           </div>
           <h1 className="text-[22px] font-bold text-white mb-2 tracking-tight">
-            {step === "unlock" ? "Unlock Duely" : step === "confirm" ? "Confirm PIN" : "Secure Your Vault"}
+            {step === "unlock" ? "Unlock Duely" : step === "confirm" ? "Confirm Master PIN" : "Set Master PIN"}
           </h1>
           <p className="text-[13px] text-slate-400">
-            {step === "unlock" ? "Enter your secure key to decrypt card data." : 
-             step === "confirm" ? "Re-enter your 6-digit passcode." : 
-             "Choose an entry option to lock your data locally."}
+            {step === "unlock" ? "Enter your Master PIN to decrypt card data." : 
+             step === "confirm" ? "Re-enter your 6-digit Master PIN." : 
+             "Create a 6-digit Master PIN to secure your data locally."}
           </p>
           {user?.email && (
             <div className="mt-4 py-1.5 px-3 bg-white/5 border border-white/10 rounded-full inline-flex items-center gap-2 text-[11px] text-slate-300">
@@ -182,37 +175,21 @@ export default function VaultPage() {
           )}
         </div>
 
-        {step === "setup" && (
-          <div className="flex bg-[#111827] border border-white/10 rounded-[12px] p-1 mb-8 max-w-[240px] mx-auto">
-            <button type="button" onClick={() => { setMode("pin"); setPassphrase(""); setError(""); }} className={cn("flex-1 text-[12px] font-medium py-2 rounded-[8px] transition-all", mode === "pin" ? "bg-[#1a2234] text-white shadow-sm" : "text-slate-400")}>PIN</button>
-            <button type="button" onClick={() => { setMode("passphrase"); setPin(""); setConfirmPin(""); setError(""); }} className={cn("flex-1 text-[12px] font-medium py-2 rounded-[8px] transition-all", mode === "passphrase" ? "bg-[#1a2234] text-white shadow-sm" : "text-slate-400")}>Passphrase</button>
+        <div className="mb-6">
+          <div className={cn("flex justify-center gap-3.5 mb-6 transition-transform", isShaking && "translate-x-[-8px] animate-in shake duration-100")}>
+            {[...Array(6)].map((_, i) => (
+              <div key={i} className={cn("w-3.5 h-3.5 rounded-full border-2 transition-all duration-200", (step === "confirm" ? confirmPin : pin).length > i ? "bg-blue-500 border-blue-500 scale-110 shadow-[0_0_8px_rgba(59,130,246,0.5)]" : "border-white/20 bg-transparent")} />
+            ))}
           </div>
-        )}
-
-        {mode === "pin" ? (
-          <div className="mb-6">
-            <div className={cn("flex justify-center gap-3.5 mb-6 transition-transform", isShaking && "translate-x-[-8px] animate-in shake duration-100")}>
-              {[...Array(6)].map((_, i) => (
-                <div key={i} className={cn("w-3.5 h-3.5 rounded-full border-2 transition-all duration-200", (step === "confirm" ? confirmPin : pin).length > i ? "bg-blue-500 border-blue-500 scale-110 shadow-[0_0_8px_rgba(59,130,246,0.5)]" : "border-white/20 bg-transparent")} />
-              ))}
-            </div>
-            <div className="grid grid-cols-3 gap-3 max-w-[280px] mx-auto">
-              {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
-                <button type="button" key={num} onClick={() => handlePinInput(num.toString())} className="h-14 rounded-2xl bg-[#1a2234] border border-white/10 text-xl font-medium text-white transition-all active:bg-white/10 active:scale-95">{num}</button>
-              ))}
-              <button type="button" onClick={() => handlePinInput('clear')} className="h-14 rounded-2xl bg-transparent text-[13px] font-medium text-slate-400 active:scale-95">Clear</button>
-              <button type="button" onClick={() => handlePinInput('0')} className="h-14 rounded-2xl bg-[#1a2234] border border-white/10 text-xl font-medium text-white active:scale-95">0</button>
-              <button type="button" onClick={() => handlePinInput('backspace')} className="h-14 rounded-2xl bg-transparent text-xl font-medium text-slate-400 active:scale-95 flex items-center justify-center">⌫</button>
-            </div>
+          <div className="grid grid-cols-3 gap-3 max-w-[280px] mx-auto">
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
+              <button type="button" key={num} onClick={() => handlePinInput(num.toString())} className="h-14 rounded-2xl bg-[#1a2234] border border-white/10 text-xl font-medium text-white transition-all active:bg-white/10 active:scale-95">{num}</button>
+            ))}
+            <button type="button" onClick={() => handlePinInput('clear')} className="h-14 rounded-2xl bg-transparent text-[13px] font-medium text-slate-400 active:scale-95">Clear</button>
+            <button type="button" onClick={() => handlePinInput('0')} className="h-14 rounded-2xl bg-[#1a2234] border border-white/10 text-xl font-medium text-white active:scale-95">0</button>
+            <button type="button" onClick={() => handlePinInput('backspace')} className="h-14 rounded-2xl bg-transparent text-xl font-medium text-slate-400 active:scale-95 flex items-center justify-center">⌫</button>
           </div>
-        ) : (
-          <form onSubmit={handlePassphraseSubmit} className="mb-6 space-y-4">
-            <Input type="password" placeholder="Enter secure passphrase..." value={passphrase} onChange={e => setPassphrase(e.target.value)} className="h-12 bg-[#1a2234] border-white/10 text-white rounded-xl text-center focus:ring-blue-500" autoFocus />
-            <Button type="submit" disabled={isProcessing || !passphrase} className="w-full h-12 rounded-xl bg-blue-500 hover:bg-blue-600 text-white font-medium transition-all">
-              {isProcessing ? "Unlocking..." : step === "unlock" ? "Unlock Vault" : "Create Vault"}
-            </Button>
-          </form>
-        )}
+        </div>
 
         <div className="min-h-[24px]">
           {error && <div className="text-[13px] text-red-400 font-medium">{error}</div>}
