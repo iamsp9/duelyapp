@@ -58,7 +58,8 @@ export function computeStatus(card: CreditCard): PaymentStatus {
   const bill = Number(card.totalBill || 0);
   const total = getPaidTotal(card);
 
-  if (card.totalBill !== '' && card.totalBill !== null && bill === 0) return 'paid';
+  // Req 5: If the bill is 0 or negative, automatically mark as paid
+  if (card.totalBill !== '' && card.totalBill !== null && bill <= 0) return 'paid';
   if (bill > 0 && total >= bill) return 'paid';
   if (total > 0) return 'partial';
   return 'unpaid';
