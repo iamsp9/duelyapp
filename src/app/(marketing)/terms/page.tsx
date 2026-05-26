@@ -39,7 +39,7 @@ export default function TermsPage() {
           <h2 className="text-2xl font-semibold text-white mb-4">2. Description of Service</h2>
           <p>
             Duely is a personal utility application designed to help users track credit card due dates and balances. 
-            <strong>Duely is not a financial advisor, bank, or payment processor.</strong> The App does not facilitate actual money transfers or bill payments.
+            <strong> Duely is not a financial advisor, bank, or payment processor.</strong> The App does not facilitate actual money transfers or bill payments.
           </p>
         </section>
 

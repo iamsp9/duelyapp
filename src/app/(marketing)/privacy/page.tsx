@@ -70,7 +70,7 @@ export default function PrivacyPage() {
         <section>
           <h2 className="text-2xl font-semibold text-white mb-4">5. Data Retention and Account Deletion</h2>
           <p>
-            You have full control over your data. You can request the complete deletion of your account and all associated encrypted vault data at any time from the app settings or by contacting us at [Insert Contact Email]. Upon deletion, your email and encrypted vault blobs are permanently purged from our database.
+            You have full control over your data. You can request the complete deletion of your account and all associated encrypted vault data at any time from the app settings or by contacting us at contact@duely.co.in. Upon deletion, your email and encrypted vault blobs are permanently purged from our database.
           </p>
         </section>
       </div>

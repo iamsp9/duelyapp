@@ -135,9 +135,8 @@ export function BackupRestoreSettings() {
           const salt = fromBase64(parsedData.salt);
           const key = await deriveKey(user.email, salt);
           vaultDataToRestore = await decryptData(key, parsedData.ciphertext, parsedData.iv);
-        } catch (decryptionError) {
-          console.error("Decryption failed", decryptionError);
-          showToast("Decryption failed. Please ensure you are logged in with the same email used for backup.", "error");
+        } catch (decryptionError: any) {
+          showToast("Decryption failed.", "error");
           return;
         }
       } else {
@@ -152,11 +151,9 @@ export function BackupRestoreSettings() {
 
       setVault(vaultDataToRestore);
       showToast("Vault restored successfully!", "success");
-    } catch (err) {
-      console.error("Restore failed", err);
-      showToast("Failed to restore data. The file might be corrupted or invalid.", "error");
+    } catch (err: any) {
+      showToast("Failed to restore data.", "error");
     } finally {
-      // Reset the file input so the same file can be uploaded again if needed
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
