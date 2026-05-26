@@ -97,3 +97,18 @@ export async function cancelAccountDeletion() {
     if (error) throw error;
   }
 }
+
+export async function wipeUserVault() {
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const { error } = await supabase
+    .from("vaults")
+    .delete()
+    .eq("user_id", user.id);
+
+  if (error) {
+    throw error;
+  }
+}

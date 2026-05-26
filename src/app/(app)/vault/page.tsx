@@ -3,13 +3,13 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { createVault, unlockVault } from "@/lib/crypto/vault";
-import { saveVault, loadVault, cancelAccountDeletion } from "@/lib/supabase/vaults";
+import { saveVault, loadVault, cancelAccountDeletion, wipeUserVault } from "@/lib/supabase/vaults";
 import { useVaultStore } from "@/stores/vault-store";
 import { useAuth } from "@/hooks/use-auth";
-import { Lock, LogOut, ShieldAlert } from "lucide-react";
+import { Lock, LogOut, ShieldAlert, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-type Step = "loading" | "unlock" | "setup" | "confirm";
+type Step = "loading" | "unlock" | "setup" | "confirm" | "forgot_pin";
 
 export default function VaultPage() {
   const router = useRouter();
@@ -27,7 +27,19 @@ export default function VaultPage() {
   const [isShaking, setIsShaking] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
+  // --- Rate Limiting State ---
+  const [failedAttempts, setFailedAttempts] = useState(0);
+  const [lockoutEndTime, setLockoutEndTime] = useState<number | null>(null);
+  const [remainingTime, setRemainingTime] = useState<number>(0);
+
   useEffect(() => {
+    // 1. Restore rate limits from localStorage on initial load
+    const storedAttempts = localStorage.getItem("duely_failed_attempts");
+    const storedLockout = localStorage.getItem("duely_lockout_end");
+    
+    if (storedAttempts) setFailedAttempts(parseInt(storedAttempts, 10));
+    if (storedLockout) setLockoutEndTime(parseInt(storedLockout, 10));
+
     async function checkExistingVault() {
       try {
         const cloudVault = await loadVault();
@@ -46,12 +58,61 @@ export default function VaultPage() {
     checkExistingVault();
   }, []);
 
-  const triggerError = (msg: string) => {
-    setError(msg);
+  // Timer for Rate Limiting
+  useEffect(() => {
+    if (!lockoutEndTime) {
+      setRemainingTime(0);
+      return;
+    }
+
+    const updateTimer = () => {
+      const now = Date.now();
+      const diff = Math.ceil((lockoutEndTime - now) / 1000);
+      if (diff <= 0) {
+        setLockoutEndTime(null);
+        setRemainingTime(0);
+        localStorage.removeItem("duely_lockout_end");
+        setError(""); // Clear error message when time expires
+      } else {
+        setRemainingTime(diff);
+      }
+    };
+
+    // Run immediately to prevent 1-second delay
+    updateTimer();
+    const interval = setInterval(updateTimer, 1000);
+
+    return () => clearInterval(interval);
+  }, [lockoutEndTime]);
+
+  const triggerError = (msg: string, isUnlockAttempt = false) => {
     setIsShaking(true);
     setTimeout(() => setIsShaking(false), 400);
     setPin("");
     setConfirmPin("");
+
+    if (isUnlockAttempt) {
+      const newAttempts = failedAttempts + 1;
+      setFailedAttempts(newAttempts);
+      localStorage.setItem("duely_failed_attempts", newAttempts.toString());
+
+      // Lockout thresholds (e.g., 3 attempts = 1 min, 5 = 5 mins, 7 = 15 mins)
+      let lockoutSeconds = 0;
+      if (newAttempts >= 7) lockoutSeconds = 900; // 15 mins
+      else if (newAttempts >= 5) lockoutSeconds = 300; // 5 mins
+      else if (newAttempts >= 3) lockoutSeconds = 60; // 1 min
+
+      if (lockoutSeconds > 0) {
+        const endTime = Date.now() + lockoutSeconds * 1000;
+        setLockoutEndTime(endTime);
+        localStorage.setItem("duely_lockout_end", endTime.toString());
+        setError(`Too many failed attempts. Try again in ${Math.ceil(lockoutSeconds / 60)} minute(s).`);
+      } else {
+        setError(msg);
+      }
+    } else {
+      setError(msg);
+    }
   };
 
   const handleSetup = useCallback(async (secretKey: string) => {
@@ -63,13 +124,12 @@ export default function VaultPage() {
       const newVault = await createVault(secretKey, "pin", emptyData);
       await saveVault(newVault);
       
-      // FIXED: Assert metadata exists (!)
       setAuth(secretKey, newVault.metadata!.salt, "pin");
       setVault(emptyData);
       setHydrated(true);
       router.push("/dashboard");
     } catch (err) {
-      triggerError("Encryption failure. Please try again.");
+      triggerError("Encryption failure. Please try again.", false);
     } finally {
       setIsProcessing(false);
     }
@@ -87,20 +147,49 @@ export default function VaultPage() {
         await cancelAccountDeletion();
       }
       
-      // FIXED: Assert metadata exists (!)
+      // Reset failed attempts on success
+      setFailedAttempts(0);
+      setLockoutEndTime(null);
+      localStorage.removeItem("duely_failed_attempts");
+      localStorage.removeItem("duely_lockout_end");
+      
       setAuth(secretKey, encryptedVault.metadata!.salt, "pin");
       setVault(decryptedData);
       setHydrated(true);
       router.push("/dashboard");
     } catch (err) {
-      triggerError("Incorrect Master PIN. Please try again.");
+      triggerError("Incorrect Master PIN. Please try again.", true);
     } finally {
       setIsProcessing(false);
     }
-  }, [encryptedVault, router, setAuth, setHydrated, setVault]);
+  }, [encryptedVault, router, setAuth, setHydrated, setVault, failedAttempts]);
+
+  const handleWipeVault = async () => {
+    setIsProcessing(true);
+    try {
+      await wipeUserVault();
+      setEncryptedVault(null);
+      setStep("setup"); // Revert back to setup for the "new" user
+      setPin("");
+      setConfirmPin("");
+      setAcknowledged(false);
+      
+      // Reset rate limiting blocks entirely
+      setFailedAttempts(0);
+      setLockoutEndTime(null);
+      localStorage.removeItem("duely_failed_attempts");
+      localStorage.removeItem("duely_lockout_end");
+    } catch (err) {
+      setError("Failed to reset account. Please try again.");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   const handlePinInput = useCallback((val: string) => {
-    if (isProcessing || (step === "setup" && !acknowledged)) return;
+    // Block input if processing, setting up but unacknowledged, or currently locked out
+    if (isProcessing || (step === "setup" && !acknowledged) || lockoutEndTime) return;
+    
     setError("");
     const current = step === "confirm" ? confirmPin : pin;
     const setter = step === "confirm" ? setConfirmPin : setPin;
@@ -118,7 +207,7 @@ export default function VaultPage() {
           setTimeout(() => setStep("confirm"), 150);
         } else if (step === "confirm") {
           if (newPin !== pin) {
-            triggerError("PINs do not match. Restarting setup.");
+            triggerError("PINs do not match. Restarting setup.", false);
             setTimeout(() => setStep("setup"), 400);
           } else {
             handleSetup(newPin);
@@ -128,18 +217,19 @@ export default function VaultPage() {
         }
       }
     }
-  }, [confirmPin, isProcessing, pin, step, acknowledged, handleSetup, handleUnlock]);
+  }, [confirmPin, isProcessing, pin, step, acknowledged, handleSetup, handleUnlock, lockoutEndTime]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement) return;
+      if (step === "forgot_pin") return; // Disable keyboard PIN input while in forgot flow
       if (e.key >= '0' && e.key <= '9') handlePinInput(e.key);
       if (e.key === 'Backspace') handlePinInput('backspace');
       if (e.key === 'Escape') handlePinInput('clear');
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handlePinInput]);
+  }, [handlePinInput, step]);
 
   if (step === "loading") {
     return (
@@ -149,12 +239,66 @@ export default function VaultPage() {
     );
   }
 
+  // --- FORGOT PIN MODAL ---
+  if (step === "forgot_pin") {
+    return (
+      <main className="min-h-screen bg-[#020817] flex items-center justify-center p-4 backdrop-blur-sm">
+        <div className="w-full max-w-md rounded-xl border border-red-500/30 bg-[#0a0f1c] p-6 shadow-2xl relative overflow-hidden">
+          <div className="absolute top-0 left-0 right-0 h-1 bg-red-500/50" />
+          
+          <div className="flex flex-col items-center text-center mb-6">
+            <div className="w-14 h-14 bg-red-500/10 rounded-full flex items-center justify-center mb-4">
+              <AlertTriangle className="size-7 text-red-500" />
+            </div>
+            <h2 className="text-xl font-bold text-white mb-2">Reset Account & Vault</h2>
+            <p className="text-[14px] text-slate-300">
+              Because Duely uses strict zero-knowledge encryption, we <strong className="text-red-400">cannot recover your Master PIN</strong> or decrypt your data.
+            </p>
+          </div>
+
+          <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 mb-6">
+            <ul className="text-[13px] text-red-300 space-y-2 text-left list-disc list-inside">
+              <li>All saved cards and transaction history will be <strong className="text-red-400">permanently deleted</strong>.</li>
+              <li>Your encrypted vault in the cloud will be destroyed.</li>
+              <li>You will start fresh as a new user.</li>
+            </ul>
+          </div>
+
+          <div className="flex flex-col gap-3">
+            <button 
+              onClick={handleWipeVault}
+              disabled={isProcessing}
+              className="w-full py-2.5 rounded-lg bg-red-500 hover:bg-red-600 text-white font-medium text-sm transition-colors disabled:opacity-50"
+            >
+              {isProcessing ? "Wiping Data..." : "I Understand, Delete My Vault"}
+            </button>
+            <button 
+              onClick={() => { setStep("unlock"); setPin(""); setError(""); }}
+              disabled={isProcessing}
+              className="w-full py-2.5 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 font-medium text-sm transition-colors disabled:opacity-50"
+            >
+              Cancel, Go Back
+            </button>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  // --- MAIN VAULT VIEW ---
   return (
     <main className="min-h-screen bg-[#020817] flex flex-col items-center justify-center p-4">
       <div className="w-full max-w-[380px] text-center">
         <div className="mb-8">
-          <div className="w-16 h-16 bg-[#1a2234] border border-white/10 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-black/50">
+          <div className="w-16 h-16 bg-[#1a2234] border border-white/10 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-black/50 relative">
             {step === "unlock" ? <Lock className="size-8 text-blue-400" /> : <ShieldAlert className="size-8 text-green-400" />}
+            
+            {/* Show lock icon if rate limited */}
+            {lockoutEndTime && (
+               <div className="absolute inset-0 bg-black/60 rounded-2xl flex items-center justify-center backdrop-blur-sm">
+                 <Lock className="size-6 text-red-500" />
+               </div>
+            )}
           </div>
           <h1 className="text-[22px] font-bold text-white mb-2 tracking-tight">
             {step === "unlock" ? "Unlock Duely" : step === "confirm" ? "Confirm Master PIN" : "Set Master PIN"}
@@ -186,7 +330,7 @@ export default function VaultPage() {
           </div>
         )}
 
-        <div className={cn("mb-6 transition-opacity duration-300", step === "setup" && !acknowledged && "opacity-30 pointer-events-none")}>
+        <div className={cn("mb-6 transition-opacity duration-300", (step === "setup" && !acknowledged) || lockoutEndTime ? "opacity-30 pointer-events-none" : "")}>
           <div className={cn("flex justify-center gap-3.5 mb-6 transition-transform", isShaking && "translate-x-[-8px] animate-in shake duration-100")}>
             {[...Array(6)].map((_, i) => (
               <div key={i} className={cn("w-3.5 h-3.5 rounded-full border-2 transition-all duration-200", (step === "confirm" ? confirmPin : pin).length > i ? "bg-blue-500 border-blue-500 scale-110 shadow-[0_0_8px_rgba(59,130,246,0.5)]" : "border-white/20 bg-transparent")} />
@@ -203,11 +347,26 @@ export default function VaultPage() {
         </div>
 
         <div className="min-h-[24px]">
-          {error && <div className="text-[13px] text-red-400 font-medium">{error}</div>}
-          {isProcessing && !error && <div className="text-[13px] text-blue-400 font-medium animate-pulse">Processing security handshake...</div>}
+          {error && !lockoutEndTime && <div className="text-[13px] text-red-400 font-medium">{error}</div>}
+          {lockoutEndTime && remainingTime > 0 && (
+             <div className="text-[13px] text-red-400 font-medium flex items-center justify-center gap-2 animate-pulse">
+               <Lock className="size-3" /> Try again in {Math.floor(remainingTime / 60)}:{(remainingTime % 60).toString().padStart(2, '0')}
+             </div>
+          )}
+          {isProcessing && !error && !lockoutEndTime && <div className="text-[13px] text-blue-400 font-medium animate-pulse">Processing security handshake...</div>}
         </div>
 
-        <div className="mt-8 pt-6 border-t border-white/5">
+        <div className="mt-8 pt-6 border-t border-white/5 flex flex-col gap-4">
+          {step === "unlock" && user && (
+             <button 
+               type="button" 
+               onClick={() => setStep("forgot_pin")} 
+               className="text-[12px] text-red-400/80 hover:text-red-400 transition-colors underline underline-offset-2"
+             >
+               Forgot PIN? Reset Account
+             </button>
+          )}
+
           <button type="button" onClick={async () => { await signOut(); router.push("/login"); }} className="flex items-center justify-center gap-1.5 w-full text-[13px] text-slate-500 hover:text-slate-300 transition-colors">
             <LogOut className="size-3.5" /> Sign out / Switch Account
           </button>

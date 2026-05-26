@@ -3,8 +3,14 @@
 import { useState, useRef } from "react";
 import { useVaultStore } from "@/stores/vault-store";
 import { CheckCircle2, AlertCircle } from "lucide-react";
+import { useAuth } from "@/hooks/use-auth";
+import { encryptData, decryptData } from "@/lib/crypto/aes";
+import { deriveKey } from "@/lib/crypto/kdf";
+import { toBase64, fromBase64 } from "@/lib/crypto/encoding";
 
 export function BackupRestoreSettings() {
+  const { user } = useAuth();
+  
   // Pull state and setter from Zustand
   const vault = useVaultStore((state) => state.vault);
   const secret = useVaultStore((state) => state.secret);
@@ -41,7 +47,7 @@ export function BackupRestoreSettings() {
   };
 
   // Verifies PIN against the current session's secret
-  const handlePinSubmit = (e: React.FormEvent) => {
+  const handlePinSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (pinInput !== secret) {
       setError("Incorrect Master PIN. Please try again.");
@@ -51,16 +57,36 @@ export function BackupRestoreSettings() {
     setShowPinModal(false);
 
     if (action === "backup") {
-      executeBackup();
+      await executeBackup();
     } else if (action === "restore") {
       fileInputRef.current?.click();
     }
   };
 
-  // Generates and downloads the .duely file
-  const executeBackup = () => {
+  // Generates and downloads the securely encrypted .duely file
+  const executeBackup = async () => {
     try {
-      const data = JSON.stringify(vault, null, 2);
+      if (!user?.email) {
+        showToast("Authentication required to encrypt backup files securely.", "error");
+        return;
+      }
+
+      // 1. Generate salt and derive encryption key using user's email
+      const salt = crypto.getRandomValues(new Uint8Array(16));
+      const key = await deriveKey(user.email, salt);
+      
+      // 2. Encrypt the vault state
+      const { ciphertext, iv } = await encryptData(key, vault);
+
+      // 3. Create a payload representing the encrypted backup
+      const backupPayload = {
+        version: 2,
+        ciphertext,
+        iv,
+        salt: toBase64(salt.buffer as ArrayBuffer),
+      };
+
+      const data = JSON.stringify(backupPayload, null, 2);
       const blob = new Blob([data], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       
@@ -75,14 +101,14 @@ export function BackupRestoreSettings() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       
-      showToast("Backup file exported successfully.", "success");
+      showToast("Secure backup exported successfully.", "success");
     } catch (err) {
       console.error("Backup failed", err);
       showToast("Failed to create backup file.", "error");
     }
   };
 
-  // Parses the uploaded .duely file and updates the vault
+  // Parses and decrypts the uploaded .duely file and updates the vault
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -96,12 +122,35 @@ export function BackupRestoreSettings() {
       const text = await file.text();
       const parsedData = JSON.parse(text);
 
+      let vaultDataToRestore;
+
+      // Check if it's the new encrypted format (version 2)
+      if (parsedData.version === 2 && parsedData.ciphertext) {
+        if (!user?.email) {
+          showToast("You must be logged in to restore a secure backup.", "error");
+          return;
+        }
+
+        try {
+          const salt = fromBase64(parsedData.salt);
+          const key = await deriveKey(user.email, salt);
+          vaultDataToRestore = await decryptData(key, parsedData.ciphertext, parsedData.iv);
+        } catch (decryptionError) {
+          console.error("Decryption failed", decryptionError);
+          showToast("Decryption failed. Please ensure you are logged in with the same email used for backup.", "error");
+          return;
+        }
+      } else {
+        // Fallback: Retain backward compatibility for older plain-text unencrypted backups
+        vaultDataToRestore = parsedData;
+      }
+
       // Basic validation to ensure we're injecting the right state shape
-      if (!parsedData || !Array.isArray(parsedData.cards)) {
+      if (!vaultDataToRestore || !Array.isArray(vaultDataToRestore.cards)) {
         throw new Error("Invalid vault data structure");
       }
 
-      setVault(parsedData);
+      setVault(vaultDataToRestore);
       showToast("Vault restored successfully!", "success");
     } catch (err) {
       console.error("Restore failed", err);
@@ -129,14 +178,14 @@ export function BackupRestoreSettings() {
       )}
 
       {/* Disclaimer Section */}
-      <div className="rounded-lg border border-orange-500/30 bg-orange-500/10 p-4 text-sm text-orange-400">
+      <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 p-4 text-sm text-blue-400">
         <h4 className="font-semibold mb-1 flex items-center gap-2">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
-          Important Security Disclaimer
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          Encrypted Backup
         </h4>
         <p>
-          Local backups are exported as plain text <code className="bg-orange-500/20 px-1 rounded">.duely</code> files.
-          <strong> This file is NOT encrypted.</strong> Any third-party app or person with access to this file can read your vault data. Please store it securely.
+          Local backups are exported as <code className="bg-blue-500/20 px-1 rounded">.duely</code> files.
+          <strong> These files are securely encrypted</strong> using your current account email <span className="font-medium text-blue-300">({user?.email || "not logged in"})</span>. You will need to be logged in with this same email to restore the backup in the future.
         </p>
       </div>
 
