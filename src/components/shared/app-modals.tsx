@@ -197,7 +197,7 @@ export function AppModals() {
 
               <button 
                 onClick={() => setProfileView('delete_account')}
-                className="flex items-center justify-between w-full p-3 rounded-xl border border-white/10 bg-transparent text-sm font-medium text-slate-300 transition-all hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/20 active:bg-red-500/20 min-h-[44px]"
+                className="flex items-center justify-between w-full p-3 rounded-xl border border-red-500/20 bg-red-500/10 text-sm font-medium text-red-400 transition-all hover:bg-red-500/20 active:bg-red-500/30 min-h-[44px]"
               >
                 <div className="flex items-center gap-2">
                   <Trash2 className="size-4" /> Delete Account
@@ -208,7 +208,7 @@ export function AppModals() {
 
               <button 
                 onClick={handleSignOut}
-                className="flex items-center justify-center gap-2 w-full p-3 rounded-xl border border-red-500/20 bg-red-500/10 text-sm font-medium text-red-400 transition-all active:bg-red-500/20 min-h-[44px]"
+                className="flex items-center justify-center gap-2 w-full p-3 rounded-xl border border-white/10 bg-transparent text-sm font-medium text-slate-300 transition-all hover:bg-white/5 active:bg-white/10 min-h-[44px]"
               >
                 <LogOut className="size-4" /> Sign out
               </button>
