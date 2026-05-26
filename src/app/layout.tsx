@@ -7,22 +7,33 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://duely.app"),
-
+  metadataBase: new URL("https://duely.app"), // Replace with your actual production URL
   title: {
-    default: "Duely",
+    default: "Duely | Secure Credit Card Management",
     template: "%s | Duely",
   },
-
   description:
-    "Securely track credit card bills, due dates, and payments.",
-
+    "Take control of your financial health. Securely track credit card bills, due dates, and payments with military-grade end-to-end encryption.",
+  keywords: [
+    "credit card tracker",
+    "financial wellness",
+    "payment reminders",
+    "secure vault",
+    "personal finance",
+    "bill tracker"
+  ],
   openGraph: {
-    title: "Duely",
-    description:
-      "Secure credit card bill tracking.",
+    title: "Duely - The Modern Credit Card Vault",
+    description: "Never miss a payment with end-to-end encrypted tracking.",
+    url: "https://duely.app",
     siteName: "Duely",
     type: "website",
+    locale: "en_US",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Duely | Secure Credit Card Management",
+    description: "End-to-end encrypted credit card bill tracking across all your devices.",
   },
 };
 
