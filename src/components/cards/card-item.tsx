@@ -39,6 +39,7 @@ export function CardItem({ card }: Props) {
   } | null>(null);
 
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
+  const [confirmOverwrite, setConfirmOverwrite] = useState(false);
 
   const [billVal, setBillVal] = useState(card.totalBill || "");
   const [payVal, setPayVal] = useState("");
@@ -117,13 +118,16 @@ export function CardItem({ card }: Props) {
     );
   };
 
-  const handleSave = () => {
+  const handleSave = (isConfirmed = false) => {
+    const confirmed = isConfirmed === true; 
+
     if (
       card.totalBill !== "" &&
       card.totalBill !== null &&
-      card.totalBill !== undefined
+      card.totalBill !== undefined &&
+      !confirmed
     ) {
-      showToast("Bill already set for this cycle", "error");
+      setConfirmOverwrite(true);
       return;
     }
 
@@ -154,6 +158,7 @@ export function CardItem({ card }: Props) {
 
     saveCardState(card.id, updates);
 
+    setConfirmOverwrite(false);
     setOpen(false);
     showToast("Bill Saved Successfully", "success");
   };
@@ -345,9 +350,32 @@ export function CardItem({ card }: Props) {
               ></textarea>
             </div>
 
+            {confirmOverwrite && (
+              <div className="mb-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 flex items-center justify-between gap-3 animate-in fade-in zoom-in-95 duration-200">
+                <div className="text-xs text-amber-200">
+                  Bill is already set for this cycle. Overwrite it?
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => setConfirmOverwrite(false)}
+                    className="px-3 py-1.5 rounded-lg border border-white/10 text-xs text-slate-300 hover:bg-white/5 transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => handleSave(true)}
+                    className="px-3 py-1.5 rounded-lg bg-amber-500/20 border border-amber-500/30 text-xs text-amber-200 hover:bg-amber-500/30 transition-all"
+                  >
+                    Overwrite
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="flex gap-2 mb-2.5">
               <button
-                onClick={handleSave}
+                onClick={() => handleSave(false)}
                 className="flex-1 flex items-center justify-center gap-1.5 bg-white/5 border border-white/10 rounded-[10px] py-2.5 text-[13px] font-medium text-white transition-all active:bg-white/10 min-h-[44px]"
               >
                 <Save className="size-4" /> Save
