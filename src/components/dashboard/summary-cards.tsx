@@ -1,76 +1,39 @@
 "use client";
 
-import {
-  useVaultStore,
-} from "@/stores/vault-store";
-
+import { useVaultStore } from "@/stores/vault-store";
 import { getSummary, isActive, computeStatus } from "@/lib/engine/cards";
 
-function formatINR(
-  value: number
-) {
-  return new Intl.NumberFormat(
-    "en-IN",
-    {
-      maximumFractionDigits: 0,
-    }
-  ).format(value);
+function formatINR(value: number) {
+  return new Intl.NumberFormat("en-IN", {
+    maximumFractionDigits: 0,
+  }).format(value);
 }
 
 export function SummaryCards() {
-  const cards =
-    useVaultStore(
-      (s) =>
-        s.vault.cards
-    );
-
-  const summary =
-    getSummary(cards);
+  const cards = useVaultStore((s) => s.vault.cards);
+  const summary = getSummary(cards);
 
   const items = [
     {
       label: "Billed",
-
-      value:
-        "₹" +
-        formatINR(
-          summary.billed
-        ),
-
-      color:
-        "text-white",
+      value: "₹" + formatINR(summary.billed),
+      color: "text-white",
     },
-
     {
       label: "Paid",
-
-      value:
-        "₹" +
-        formatINR(
-          summary.paid
-        ),
-
-      color:
-        "text-emerald-400",
+      value: "₹" + formatINR(summary.paid),
+      color: "text-emerald-400",
     },
-
     {
-      label:
-        "Outstanding",
-
-      value:
-        "₹" +
-        formatINR(
-          summary.outstanding
-        ),
-
-      color:
-        "text-red-400",
+      label: "Outstanding",
+      value: "₹" + formatINR(summary.outstanding),
+      color: "text-red-400",
     },
-
     {
       label: "Pending",
-      value: String(cards.filter((c) => isActive(c) && computeStatus(c) !== "paid").length),
+      value: String(
+        cards.filter((c) => isActive(c) && computeStatus(c) !== "paid").length
+      ),
       color: "text-orange-400",
     },
   ];
@@ -91,18 +54,6 @@ export function SummaryCards() {
           >
             {item.value}
           </div>
-
-          {item.progress !==
-            undefined && (
-              <div className="mt-5 h-2 overflow-hidden rounded-full bg-white/10">
-                <div
-                  className="h-full rounded-full bg-emerald-400"
-                  style={{
-                    width: `${item.progress}%`,
-                  }}
-                />
-              </div>
-            )}
         </div>
       ))}
     </div>
