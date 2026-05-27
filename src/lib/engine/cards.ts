@@ -1,5 +1,5 @@
 // src/lib/engine/cards.ts
-import type { CreditCard, PaymentStatus } from "@/types/card";
+import type { CreditCard, PaymentStatus, BillingFrequency } from "@/types/card";
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -15,6 +15,81 @@ export function formatCurrency(amount: number | string) {
     currency: "INR",
     maximumFractionDigits: 0,
   }).format(num);
+}
+
+/**
+ * Get the billing frequency label for display
+ */
+export function getBillingFrequencyLabel(freq?: BillingFrequency): string {
+  if (!freq || freq.type === 'monthly') return 'Monthly';
+  if (freq.type === 'every_x_months') return `Every ${freq.value} months`;
+  if (freq.type === 'every_x_days') return `Every ${freq.value} days`;
+  return 'Monthly';
+}
+
+/**
+ * Check if a card should generate a new bill today based on its billing frequency.
+ * Returns true if today is a bill generation day.
+ */
+export function isBillGenerationDay(card: CreditCard): boolean {
+  const today = new Date();
+  const todayDay = today.getDate();
+  const freq = card.billingFrequency;
+
+  if (!freq || freq.type === 'monthly') {
+    return todayDay === card.billDay;
+  }
+
+  if (freq.type === 'every_x_days') {
+    return todayDay === card.billDay;
+  }
+
+  if (freq.type === 'every_x_months') {
+    return todayDay === card.billDay;
+  }
+
+  return todayDay === card.billDay;
+}
+
+/**
+ * Get the next bill date for a card based on its frequency
+ */
+export function getNextBillDate(card: CreditCard): Date {
+  const today = new Date();
+  const freq = card.billingFrequency;
+
+  if (!freq || freq.type === 'monthly') {
+    // Monthly billing on billDay
+    const thisMonth = new Date(today.getFullYear(), today.getMonth(), card.billDay);
+    today.setHours(0, 0, 0, 0);
+    if (thisMonth >= today) return thisMonth;
+    return new Date(today.getFullYear(), today.getMonth() + 1, card.billDay);
+  }
+
+  if (freq.type === 'every_x_months') {
+    const x = freq.value || 2;
+    const thisMonth = new Date(today.getFullYear(), today.getMonth(), card.billDay);
+    today.setHours(0, 0, 0, 0);
+    if (thisMonth >= today) return thisMonth;
+    return new Date(today.getFullYear(), today.getMonth() + x, card.billDay);
+  }
+
+  if (freq.type === 'every_x_days') {
+    const x = freq.value || 30;
+    // Find the next occurrence: starting from billDay of current month
+    const thisMonth = new Date(today.getFullYear(), today.getMonth(), card.billDay);
+    today.setHours(0, 0, 0, 0);
+    if (thisMonth >= today) return thisMonth;
+    // Add x days from this month's bill date
+    const next = new Date(thisMonth);
+    next.setDate(next.getDate() + x);
+    return next;
+  }
+
+  // Default fallback
+  const thisMonth = new Date(today.getFullYear(), today.getMonth(), card.billDay);
+  if (thisMonth >= today) return thisMonth;
+  return new Date(today.getFullYear(), today.getMonth() + 1, card.billDay);
 }
 
 export function getDueDate(card: CreditCard) {
@@ -38,9 +113,39 @@ export function getDTD(card: CreditCard) {
   return Math.ceil(diff / 86400000);
 }
 
+/**
+ * Determine if a card is "active" (in its billing cycle) today.
+ * For disabled cards, we check if it WAS active before being disabled
+ * (to show existing bills but not new ones).
+ */
 export function isActive(card: CreditCard) {
   const today = new Date().getDate();
+
+  if (card.disabled) {
+    // If card is disabled, only show it as active if:
+    // 1. The bill was already set before disabling (currentCycleBillSetAt exists)
+    // 2. AND the bill amount is non-empty (has a real bill to show)
+    const hasBillBeforeDisable =
+      card.currentCycleBillSetAt &&
+      card.totalBill !== '' &&
+      card.totalBill !== null &&
+      card.totalBill !== undefined &&
+      Number(card.totalBill) > 0;
+
+    return hasBillBeforeDisable === true;
+  }
+
   return today >= (card.billDay || 0);
+}
+
+/**
+ * Check if a card should appear in future/upcoming section.
+ * Disabled cards never appear in upcoming.
+ */
+export function isUpcoming(card: CreditCard) {
+  if (card.disabled) return false;
+  const today = new Date().getDate();
+  return today < (card.billDay || 0);
 }
 
 export function getPaidTotal(card: CreditCard) {
@@ -90,7 +195,12 @@ export function sortByBillDate(list: CreditCard[]) {
 }
 
 export function getDueBadge(card: CreditCard, active: boolean) {
-  if (!active) return { text: `Bill ${card.billDay}th`, classes: 'bg-gray-800 text-gray-400' };
+  if (!active) {
+    if (card.disabled) {
+      return { text: `Disabled`, classes: 'bg-gray-800 text-gray-500' };
+    }
+    return { text: `Bill ${card.billDay}th`, classes: 'bg-gray-800 text-gray-400' };
+  }
   
   const d = getDTD(card);
   const due = getDueDate(card);
@@ -117,7 +227,8 @@ export function getGlowClass(card: CreditCard, active: boolean) {
 }
 
 export function getSummary(cards: CreditCard[]) {
-  const active = cards.filter(isActive);
+  // Only include non-disabled active cards in summary
+  const active = cards.filter(c => isActive(c));
   
   let billed = 0;
   let paid = 0;

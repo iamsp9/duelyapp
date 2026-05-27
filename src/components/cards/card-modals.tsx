@@ -5,6 +5,7 @@ import { useVaultStore } from "@/stores/vault-store";
 import { useUIStore } from "@/stores/ui-store";
 import { Modal } from "@/components/ui/modal";
 import { calculateDueDay } from "@/lib/engine/cards";
+import type { BillingFrequency } from "@/types/card";
 import {
   Pencil,
   Calendar,
@@ -13,6 +14,7 @@ import {
   Trash2,
   Archive,
   AlertTriangle,
+  RefreshCw,
 } from "lucide-react";
 
 // ─── Date Utilities ─────────────────────────────────────────────────────────
@@ -41,6 +43,78 @@ function formatDate(date: Date): string {
     month: "short",
     year: "numeric",
   });
+}
+
+// ─── Billing Frequency Selector ───────────────────────────────────────────────
+
+interface BillingFrequencySelectorProps {
+  value: BillingFrequency;
+  onChange: (freq: BillingFrequency) => void;
+}
+
+function BillingFrequencySelector({ value, onChange }: BillingFrequencySelectorProps) {
+  const options: { type: BillingFrequency['type']; label: string }[] = [
+    { type: 'monthly', label: 'Monthly' },
+    { type: 'every_x_months', label: 'Every X Months' },
+    { type: 'every_x_days', label: 'Every X Days' },
+  ];
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="grid grid-cols-3 gap-1.5 p-1 bg-[#0d1525] rounded-[10px] border border-white/10">
+        {options.map((opt) => (
+          <button
+            key={opt.type}
+            type="button"
+            onClick={() => onChange({ ...value, type: opt.type, value: opt.type === 'monthly' ? undefined : (value.value || (opt.type === 'every_x_months' ? 2 : 7)) })}
+            className={`py-2 px-2 rounded-[8px] text-[11px] font-semibold transition-all ${
+              value.type === opt.type
+                ? 'bg-blue-500 text-white shadow-sm'
+                : 'text-slate-400 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+
+      {value.type === 'every_x_months' && (
+        <div className="flex items-center gap-2 animate-in fade-in duration-150">
+          <label className="text-[12px] text-slate-400 shrink-0">Every</label>
+          <input
+            type="number"
+            min="2"
+            max="24"
+            value={value.value || 2}
+            onChange={(e) => {
+              const v = Math.max(2, Math.min(24, parseInt(e.target.value) || 2));
+              onChange({ ...value, value: v });
+            }}
+            className="w-20 bg-[#1a2234] border border-white/10 rounded-[8px] px-3 py-2 text-[14px] text-white outline-none focus:border-blue-500 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+          />
+          <label className="text-[12px] text-slate-400 shrink-0">months</label>
+        </div>
+      )}
+
+      {value.type === 'every_x_days' && (
+        <div className="flex items-center gap-2 animate-in fade-in duration-150">
+          <label className="text-[12px] text-slate-400 shrink-0">Every</label>
+          <input
+            type="number"
+            min="1"
+            max="31"
+            value={value.value || 7}
+            onChange={(e) => {
+              const v = Math.max(1, Math.min(31, parseInt(e.target.value) || 7));
+              onChange({ ...value, value: v });
+            }}
+            className="w-20 bg-[#1a2234] border border-white/10 rounded-[8px] px-3 py-2 text-[14px] text-white outline-none focus:border-blue-500 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+          />
+          <label className="text-[12px] text-slate-400 shrink-0">days</label>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ─── Delete Confirmation Sub-view ────────────────────────────────────────────
@@ -87,7 +161,7 @@ function DeleteFlow({ cardName, secret, onConfirm, onCancel }: DeleteFlowProps) 
 
       {/* Choice tiles */}
       <div className="grid grid-cols-2 gap-2.5">
-        {/* Keep history */}
+        {/* Keep history → Archive */}
         <button
           type="button"
           onClick={() => setChoice("keep")}
@@ -104,9 +178,9 @@ function DeleteFlow({ cardName, secret, onConfirm, onCancel }: DeleteFlowProps) 
             <Archive className="size-4 text-blue-400" />
           </div>
           <div>
-            <p className="text-[12px] font-semibold text-white">Keep History</p>
+            <p className="text-[12px] font-semibold text-white">Archive History</p>
             <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
-              Transaction data stays available in Reports.
+              Card is deleted but history stays in Archives &amp; Reports.
             </p>
           </div>
         </button>
@@ -188,12 +262,92 @@ function DeleteFlow({ cardName, secret, onConfirm, onCancel }: DeleteFlowProps) 
   );
 }
 
+// ─── Archive Delete Confirmation ──────────────────────────────────────────────
+
+interface ArchiveDeleteFlowProps {
+  cardName: string;
+  secret: string | null;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+function ArchiveDeleteFlow({ cardName, secret, onConfirm, onCancel }: ArchiveDeleteFlowProps) {
+  const [pin, setPin] = useState("");
+  const [pinError, setPinError] = useState("");
+
+  const handleConfirm = () => {
+    if (pin !== secret) {
+      setPinError("Incorrect Master PIN.");
+      setPin("");
+      return;
+    }
+    onConfirm();
+  };
+
+  return (
+    <div className="animate-in fade-in slide-in-from-bottom-2 duration-200 space-y-4">
+      <div className="flex items-start gap-3 p-3.5 rounded-xl bg-red-500/10 border border-red-500/20">
+        <AlertTriangle className="size-4 text-red-400 mt-0.5 shrink-0" />
+        <div>
+          <p className="text-[13px] font-semibold text-red-300">
+            Permanently delete archived &ldquo;{cardName}&rdquo;?
+          </p>
+          <p className="text-[12px] text-red-400/80 mt-0.5 leading-relaxed">
+            All transaction history will be permanently erased. This cannot be undone.
+          </p>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <label className="text-[12px] font-semibold text-slate-400 uppercase tracking-wider block">
+          Enter Master PIN to confirm
+        </label>
+        <input
+          type="password"
+          value={pin}
+          maxLength={6}
+          inputMode="numeric"
+          autoFocus
+          onChange={(e) => {
+            setPin(e.target.value);
+            setPinError("");
+          }}
+          onKeyDown={(e) => e.key === "Enter" && handleConfirm()}
+          className="w-full bg-[#111827] border border-white/10 rounded-xl px-4 py-3 text-white text-center tracking-widest text-lg focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
+          placeholder="••••••"
+        />
+        {pinError && (
+          <p className="text-[12px] text-red-400 text-center">{pinError}</p>
+        )}
+      </div>
+
+      <div className="flex gap-2 pt-1">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="flex-1 p-3 rounded-xl border border-white/10 bg-transparent text-sm font-medium text-white transition-all hover:bg-white/5 min-h-[44px]"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={handleConfirm}
+          disabled={pin.length < 6}
+          className="flex-1 p-3 rounded-xl border border-red-500/40 bg-red-500/20 text-red-300 text-sm font-medium transition-all hover:bg-red-500/30 min-h-[44px] disabled:opacity-40"
+        >
+          Delete Forever
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Component ──────────────────────────────────────────────────────────
 
 export function CardModals() {
-  const { vault, addCard, updateCard, deleteCard, toggleCardDisabled, secret } =
+  const { vault, addCard, updateCard, deleteCard, toggleCardDisabled, removeArchivedCard, secret } =
     useVaultStore();
-  const { cards } = vault;
+  const { cards, archivedCards } = vault;
 
   const {
     isManageCardsOpen,
@@ -208,10 +362,14 @@ export function CardModals() {
   const [name, setName] = useState("");
   const [billDay, setBillDay] = useState("");
   const [daysDue, setDaysDue] = useState("");
+  const [billingFrequency, setBillingFrequency] = useState<BillingFrequency>({ type: 'monthly' });
   const [error, setError] = useState("");
 
   // Whether the delete flow is showing
   const [showDeleteFlow, setShowDeleteFlow] = useState(false);
+
+  // Archive deletion state
+  const [deletingArchiveId, setDeletingArchiveId] = useState<string | null>(null);
 
   // Card being edited (resolved object)
   const editingCard = editingCardId ? cards.find((c) => c.id === editingCardId) : null;
@@ -225,10 +383,12 @@ export function CardModals() {
         let diff = editingCard.dueDay - editingCard.billDay;
         if (diff <= 0) diff += 30;
         setDaysDue(diff.toString());
+        setBillingFrequency(editingCard.billingFrequency || { type: 'monthly' });
       } else {
         setName("");
         setBillDay("");
         setDaysDue("");
+        setBillingFrequency({ type: 'monthly' });
       }
       setError("");
       setShowDeleteFlow(false);
@@ -241,12 +401,22 @@ export function CardModals() {
 
   const nextBillDate =
     bDay && !isNaN(bDay) && bDay >= 1 && bDay <= 31
-      ? getNextDateForDay(bDay)
+      ? (() => {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const thisMonth = new Date(today.getFullYear(), today.getMonth(), bDay);
+          return thisMonth >= today ? thisMonth : new Date(today.getFullYear(), today.getMonth() + 1, bDay);
+        })()
       : null;
 
   const nextDueDate =
     bDay && dDue && !isNaN(bDay) && !isNaN(dDue) && bDay >= 1 && bDay <= 31 && dDue >= 1 && dDue <= 60
-      ? getNextDueDate(bDay, dDue)
+      ? (() => {
+          if (!nextBillDate) return null;
+          const due = new Date(nextBillDate);
+          due.setDate(due.getDate() + dDue);
+          return due;
+        })()
       : null;
 
   const handleSaveCard = () => {
@@ -261,6 +431,7 @@ export function CardModals() {
         billDay: bDay,
         dueAfterDays: dDue,
         dueDay: calcDue,
+        billingFrequency,
       });
     } else {
       addCard({
@@ -269,6 +440,7 @@ export function CardModals() {
         billDay: bDay,
         dueAfterDays: dDue,
         dueDay: calcDue,
+        billingFrequency,
         totalBill: "",
         status: "unpaid",
         history: [],
@@ -289,10 +461,13 @@ export function CardModals() {
   const handleToggleDisabled = () => {
     if (!editingCardId) return;
     toggleCardDisabled(editingCardId);
-    // Reflect new value in the form immediately
     setCardFormOpen(false);
     setManageCardsOpen(true);
   };
+
+  const deletingArchive = deletingArchiveId
+    ? archivedCards.find((a) => a.id === deletingArchiveId)
+    : null;
 
   return (
     <>
@@ -302,75 +477,133 @@ export function CardModals() {
         onClose={() => setManageCardsOpen(false)}
         title="💳 Manage Cards"
       >
-        <div className="flex flex-col gap-2 max-h-[50vh] overflow-y-auto mb-2 pr-1">
-          {cards.map((c) => (
-            <div
-              key={c.id}
-              className={`flex items-center gap-2.5 p-3 rounded-xl border transition-opacity ${
-                c.disabled
-                  ? "border-white/5 bg-[#141b2b] opacity-60"
-                  : "border-white/10 bg-[#1a2234]"
-              }`}
-            >
-              {/* Disabled indicator dot */}
-              {c.disabled && (
-                <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-slate-500" />
+        {/* Archive Delete Flow */}
+        {deletingArchive ? (
+          <ArchiveDeleteFlow
+            cardName={deletingArchive.name}
+            secret={secret}
+            onConfirm={() => {
+              removeArchivedCard(deletingArchive.id);
+              setDeletingArchiveId(null);
+            }}
+            onCancel={() => setDeletingArchiveId(null)}
+          />
+        ) : (
+          <>
+            {/* Active Cards */}
+            <div className="flex flex-col gap-2 max-h-[40vh] overflow-y-auto mb-2 pr-1">
+              {cards.length > 0 && (
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 px-1">
+                  Active Cards ({cards.length})
+                </p>
               )}
-
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-[14px] font-medium text-white truncate">
-                    {c.name}
-                  </span>
+              {cards.map((c) => (
+                <div
+                  key={c.id}
+                  className={`flex items-center gap-2.5 p-3 rounded-xl border transition-opacity ${
+                    c.disabled
+                      ? "border-white/5 bg-[#141b2b] opacity-60"
+                      : "border-white/10 bg-[#1a2234]"
+                  }`}
+                >
                   {c.disabled && (
-                    <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-slate-500 bg-white/5 border border-white/10 px-1.5 py-0.5 rounded-md">
-                      Disabled
-                    </span>
+                    <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-slate-500" />
                   )}
+
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[14px] font-medium text-white truncate">
+                        {c.name}
+                      </span>
+                      {c.disabled && (
+                        <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-slate-500 bg-white/5 border border-white/10 px-1.5 py-0.5 rounded-md">
+                          Disabled
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">
+                      Bill {c.billDay}th · Due {c.dueDay}th
+                      {c.billingFrequency && c.billingFrequency.type !== 'monthly' && (
+                        <span className="ml-1.5 text-blue-400/70">
+                          · {c.billingFrequency.type === 'every_x_months' ? `Every ${c.billingFrequency.value}mo` : `Every ${c.billingFrequency.value}d`}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      setEditingCardId(c.id);
+                      setManageCardsOpen(false);
+                      setCardFormOpen(true);
+                    }}
+                    className="flex items-center justify-center gap-1.5 bg-[#111827] border border-white/10 rounded-[10px] px-3 py-2 text-[12px] font-medium text-white transition-all hover:bg-white/5 active:bg-white/10 shrink-0"
+                  >
+                    <Pencil className="size-3.5" /> Edit
+                  </button>
                 </div>
-                <div className="text-[11px] text-slate-400 mt-0.5">
-                  Bill {c.billDay}th · Due {c.dueDay}th
+              ))}
+              {cards.length === 0 && archivedCards.length === 0 && (
+                <div className="text-sm text-slate-500 text-center py-4">
+                  No cards added yet.
+                </div>
+              )}
+            </div>
+
+            {/* Archived Cards Section */}
+            {archivedCards.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-white/5">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 px-1 mb-2">
+                  Archived ({archivedCards.length})
+                </p>
+                <div className="flex flex-col gap-2 max-h-[25vh] overflow-y-auto pr-1">
+                  {archivedCards.map((a) => (
+                    <div
+                      key={a.id}
+                      className="flex items-center gap-2.5 p-3 rounded-xl border border-white/5 bg-[#141b2b] opacity-70"
+                    >
+                      <Archive className="size-3.5 text-slate-500 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <span className="text-[13px] font-medium text-slate-300 truncate block">
+                          {a.name}
+                        </span>
+                        <span className="text-[11px] text-slate-500">
+                          Archived · {a.history.length} transactions
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => setDeletingArchiveId(a.id)}
+                        className="flex items-center justify-center gap-1.5 bg-red-500/10 border border-red-500/20 rounded-[10px] px-3 py-2 text-[12px] font-medium text-red-400 transition-all hover:bg-red-500/20 shrink-0"
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    </div>
+                  ))}
                 </div>
               </div>
+            )}
 
+            <button
+              onClick={() => {
+                setEditingCardId(null);
+                setManageCardsOpen(false);
+                setCardFormOpen(true);
+              }}
+              className="mt-3 flex items-center justify-center gap-1.5 w-full bg-[#111827] border border-white/10 rounded-[10px] py-2.5 text-[13px] font-medium text-white transition-all active:bg-white/5 min-h-[44px]"
+            >
+              <span className="text-[18px]">➕</span> Add new card
+            </button>
+
+            <div className="flex gap-2 mt-3.5 pt-3 border-t border-white/10">
               <button
-                onClick={() => {
-                  setEditingCardId(c.id);
-                  setManageCardsOpen(false);
-                  setCardFormOpen(true);
-                }}
-                className="flex items-center justify-center gap-1.5 bg-[#111827] border border-white/10 rounded-[10px] px-3 py-2 text-[12px] font-medium text-white transition-all hover:bg-white/5 active:bg-white/10 shrink-0"
+                onClick={() => setManageCardsOpen(false)}
+                className="flex-1 p-3 rounded-xl border border-white/10 bg-transparent text-sm font-medium text-white transition-all active:bg-white/5 min-h-[44px]"
               >
-                <Pencil className="size-3.5" /> Edit
+                Close
               </button>
             </div>
-          ))}
-          {cards.length === 0 && (
-            <div className="text-sm text-slate-500 text-center py-4">
-              No cards added yet.
-            </div>
-          )}
-        </div>
-
-        <button
-          onClick={() => {
-            setEditingCardId(null);
-            setManageCardsOpen(false);
-            setCardFormOpen(true);
-          }}
-          className="mt-1 flex items-center justify-center gap-1.5 w-full bg-[#111827] border border-white/10 rounded-[10px] py-2.5 text-[13px] font-medium text-white transition-all active:bg-white/5 min-h-[44px]"
-        >
-          <span className="text-[18px]">➕</span> Add new card
-        </button>
-
-        <div className="flex gap-2 mt-3.5 pt-3 border-t border-white/10">
-          <button
-            onClick={() => setManageCardsOpen(false)}
-            className="flex-1 p-3 rounded-xl border border-white/10 bg-transparent text-sm font-medium text-white transition-all active:bg-white/5 min-h-[44px]"
-          >
-            Close
-          </button>
-        </div>
+          </>
+        )}
       </Modal>
 
       {/* ── Add / Edit Card Form Modal ─────────────────────────────────────── */}
@@ -397,8 +630,8 @@ export function CardModals() {
               <div className="flex items-center gap-3 mb-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20">
                 <Power className="size-4 text-amber-400 shrink-0" />
                 <p className="text-[12px] text-amber-300 leading-relaxed flex-1">
-                  This card is currently <strong>disabled</strong>. It won't
-                  appear on the dashboard or affect summaries.
+                  This card is currently <strong>disabled</strong>. It won&apos;t
+                  appear on the dashboard or in upcoming bills. Pre-disable bills are still visible.
                 </p>
               </div>
             )}
@@ -413,6 +646,18 @@ export function CardModals() {
                 onChange={(e) => setName(e.target.value)}
                 placeholder="e.g. HDFC Millennia"
                 className="bg-[#1a2234] border border-white/10 rounded-[10px] p-2.5 text-[15px] text-white focus:border-blue-500 w-full outline-none"
+              />
+            </div>
+
+            {/* Billing Frequency */}
+            <div className="flex flex-col gap-2 mb-3">
+              <label className="text-[13px] font-medium text-slate-400 flex items-center gap-1.5">
+                <RefreshCw className="size-3.5 text-slate-500" />
+                Billing frequency
+              </label>
+              <BillingFrequencySelector
+                value={billingFrequency}
+                onChange={setBillingFrequency}
               />
             </div>
 
