@@ -15,6 +15,7 @@ import {
   Plus,
   Trash2
 } from "lucide-react";
+import { DatePicker } from "@/components/ui/date-picker";
 
 interface Props { card: CreditCard; }
 
@@ -137,7 +138,16 @@ export function CardItem({ card }: Props) {
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-xs font-medium text-slate-400">Payment date</label>
-              <input type="date" value={dateVal} onChange={e => setDateVal(e.target.value)} className="bg-[#1a2234] border border-white/10 rounded-[10px] p-2.5 text-[15px] text-white focus:border-blue-500 outline-none w-full" />
+              {/* Native on mobile, custom on desktop */}
+              <input
+                type="date"
+                value={dateVal}
+                onChange={e => setDateVal(e.target.value)}
+                className="md:hidden bg-[#1a2234] border border-white/10 rounded-[10px] p-2.5 text-[15px] text-white focus:border-blue-500 outline-none w-full [color-scheme:dark]"
+              />
+              <div className="hidden md:block">
+                <DatePicker value={dateVal} onChange={(val) => setDateVal(val)} />
+              </div>
             </div>
           </div>
 
