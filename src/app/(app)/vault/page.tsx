@@ -1,3 +1,4 @@
+// src/app/(app)/vault/page.tsx
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
@@ -14,10 +15,15 @@ type Step = "loading" | "unlock" | "setup" | "confirm" | "forgot_pin";
 export default function VaultPage() {
   const router = useRouter();
   const { user, signOut } = useAuth();
-  const { setAuth, setVault, setHydrated } = useVaultStore();
+  
+  // NOTE: Swapped setVault for setVaults
+  const { setAuth, setVaults, setHydrated } = useVaultStore();
 
   const [step, setStep] = useState<Step>("loading");
-  const [encryptedVault, setEncryptedVault] = useState<any>(null);
+  
+  // Dual Vault State
+  const [encryptedMainVault, setEncryptedMainVault] = useState<any>(null);
+  const [encryptedArchiveVault, setEncryptedArchiveVault] = useState<any>(null);
   
   const [pin, setPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
@@ -27,24 +33,25 @@ export default function VaultPage() {
   const [isShaking, setIsShaking] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // --- Rate Limiting State ---
+  // Rate Limiting State
   const [failedAttempts, setFailedAttempts] = useState(0);
   const [lockoutEndTime, setLockoutEndTime] = useState<number | null>(null);
   const [remainingTime, setRemainingTime] = useState<number>(0);
 
   useEffect(() => {
-    // 1. Restore rate limits from localStorage on initial load
     const storedAttempts = localStorage.getItem("duely_failed_attempts");
     const storedLockout = localStorage.getItem("duely_lockout_end");
-    
     if (storedAttempts) setFailedAttempts(parseInt(storedAttempts, 10));
     if (storedLockout) setLockoutEndTime(parseInt(storedLockout, 10));
 
     async function checkExistingVault() {
       try {
-        const cloudVault = await loadVault();
-        if (cloudVault && cloudVault.ciphertext && cloudVault.metadata) {
-          setEncryptedVault(cloudVault);
+        const cloudMainVault = await loadVault('main');
+        const cloudArchiveVault = await loadVault('archive');
+        
+        if (cloudMainVault && cloudMainVault.ciphertext && cloudMainVault.metadata) {
+          setEncryptedMainVault(cloudMainVault);
+          setEncryptedArchiveVault(cloudArchiveVault);
           setStep("unlock");
         } else {
           setStep("setup");
@@ -58,13 +65,11 @@ export default function VaultPage() {
     checkExistingVault();
   }, []);
 
-  // Timer for Rate Limiting
   useEffect(() => {
     if (!lockoutEndTime) {
       setRemainingTime(0);
       return;
     }
-
     const updateTimer = () => {
       const now = Date.now();
       const diff = Math.ceil((lockoutEndTime - now) / 1000);
@@ -72,16 +77,13 @@ export default function VaultPage() {
         setLockoutEndTime(null);
         setRemainingTime(0);
         localStorage.removeItem("duely_lockout_end");
-        setError(""); // Clear error message when time expires
+        setError("");
       } else {
         setRemainingTime(diff);
       }
     };
-
-    // Run immediately to prevent 1-second delay
     updateTimer();
     const interval = setInterval(updateTimer, 1000);
-
     return () => clearInterval(interval);
   }, [lockoutEndTime]);
 
@@ -96,11 +98,10 @@ export default function VaultPage() {
       setFailedAttempts(newAttempts);
       localStorage.setItem("duely_failed_attempts", newAttempts.toString());
 
-      // Lockout thresholds (e.g., 3 attempts = 1 min, 5 = 5 mins, 7 = 15 mins)
       let lockoutSeconds = 0;
-      if (newAttempts >= 7) lockoutSeconds = 900; // 15 mins
-      else if (newAttempts >= 5) lockoutSeconds = 300; // 5 mins
-      else if (newAttempts >= 3) lockoutSeconds = 60; // 1 min
+      if (newAttempts >= 7) lockoutSeconds = 900;
+      else if (newAttempts >= 5) lockoutSeconds = 300;
+      else if (newAttempts >= 3) lockoutSeconds = 60;
 
       if (lockoutSeconds > 0) {
         const endTime = Date.now() + lockoutSeconds * 1000;
@@ -120,12 +121,17 @@ export default function VaultPage() {
     setError("");
 
     try {
-      const emptyData = { cards: [] };
-      const newVault = await createVault(secretKey, "pin", emptyData);
-      await saveVault(newVault);
+      const emptyMain = { cards: [] };
+      const emptyArchive = { archivedBills: [] };
       
-      setAuth(secretKey, newVault.metadata!.salt, "pin");
-      setVault(emptyData);
+      const newMainVault = await createVault(secretKey, "pin", emptyMain);
+      await saveVault(newMainVault, 'main');
+      
+      const newArchiveVault = await createVault(secretKey, "pin", emptyArchive, newMainVault.metadata!.salt);
+      await saveVault(newArchiveVault, 'archive');
+      
+      setAuth(secretKey, newMainVault.metadata!.salt, "pin");
+      setVaults(emptyMain, emptyArchive);
       setHydrated(true);
       router.push("/dashboard");
     } catch (err) {
@@ -133,28 +139,32 @@ export default function VaultPage() {
     } finally {
       setIsProcessing(false);
     }
-  }, [router, setAuth, setHydrated, setVault]);
+  }, [router, setAuth, setHydrated, setVaults]);
 
   const handleUnlock = useCallback(async (secretKey: string) => {
-    if (!encryptedVault) return;
+    if (!encryptedMainVault) return;
     setIsProcessing(true);
     setError("");
 
     try {
-      const decryptedData = await unlockVault<any>(secretKey, encryptedVault);
+      const decryptedMain = await unlockVault<any>(secretKey, encryptedMainVault);
+      let decryptedArchive = { archivedBills: [] };
       
-      if (encryptedVault.metadata?.delete_scheduled_at) {
+      if (encryptedArchiveVault && encryptedArchiveVault.ciphertext) {
+        decryptedArchive = await unlockVault<any>(secretKey, encryptedArchiveVault);
+      }
+      
+      if (encryptedMainVault.metadata?.delete_scheduled_at) {
         await cancelAccountDeletion();
       }
       
-      // Reset failed attempts on success
       setFailedAttempts(0);
       setLockoutEndTime(null);
       localStorage.removeItem("duely_failed_attempts");
       localStorage.removeItem("duely_lockout_end");
       
-      setAuth(secretKey, encryptedVault.metadata!.salt, "pin");
-      setVault(decryptedData);
+      setAuth(secretKey, encryptedMainVault.metadata!.salt, "pin");
+      setVaults(decryptedMain, decryptedArchive);
       setHydrated(true);
       router.push("/dashboard");
     } catch (err) {
@@ -162,19 +172,19 @@ export default function VaultPage() {
     } finally {
       setIsProcessing(false);
     }
-  }, [encryptedVault, router, setAuth, setHydrated, setVault, failedAttempts]);
+  }, [encryptedMainVault, encryptedArchiveVault, router, setAuth, setHydrated, setVaults, failedAttempts]);
 
   const handleWipeVault = async () => {
     setIsProcessing(true);
     try {
       await wipeUserVault();
-      setEncryptedVault(null);
-      setStep("setup"); // Revert back to setup for the "new" user
+      setEncryptedMainVault(null);
+      setEncryptedArchiveVault(null);
+      setStep("setup");
       setPin("");
       setConfirmPin("");
       setAcknowledged(false);
       
-      // Reset rate limiting blocks entirely
       setFailedAttempts(0);
       setLockoutEndTime(null);
       localStorage.removeItem("duely_failed_attempts");
@@ -187,7 +197,6 @@ export default function VaultPage() {
   };
 
   const handlePinInput = useCallback((val: string) => {
-    // Block input if processing, setting up but unacknowledged, or currently locked out
     if (isProcessing || (step === "setup" && !acknowledged) || lockoutEndTime) return;
     
     setError("");
@@ -222,7 +231,7 @@ export default function VaultPage() {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement) return;
-      if (step === "forgot_pin") return; // Disable keyboard PIN input while in forgot flow
+      if (step === "forgot_pin") return;
       if (e.key >= '0' && e.key <= '9') handlePinInput(e.key);
       if (e.key === 'Backspace') handlePinInput('backspace');
       if (e.key === 'Escape') handlePinInput('clear');
@@ -239,7 +248,6 @@ export default function VaultPage() {
     );
   }
 
-  // --- FORGOT PIN MODAL ---
   if (step === "forgot_pin") {
     return (
       <main className="min-h-screen bg-[#020817] flex items-center justify-center p-4 backdrop-blur-sm">
@@ -285,15 +293,12 @@ export default function VaultPage() {
     );
   }
 
-  // --- MAIN VAULT VIEW ---
   return (
     <main className="min-h-screen bg-[#020817] flex flex-col items-center justify-center p-4">
       <div className="w-full max-w-[380px] text-center">
         <div className="mb-8">
           <div className="w-16 h-16 bg-[#1a2234] border border-white/10 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-black/50 relative">
             {step === "unlock" ? <Lock className="size-8 text-blue-400" /> : <ShieldAlert className="size-8 text-green-400" />}
-            
-            {/* Show lock icon if rate limited */}
             {lockoutEndTime && (
                <div className="absolute inset-0 bg-black/60 rounded-2xl flex items-center justify-center backdrop-blur-sm">
                  <Lock className="size-6 text-red-500" />
@@ -325,7 +330,7 @@ export default function VaultPage() {
               className="mt-1 shrink-0 accent-orange-500 size-4 cursor-pointer"
             />
             <label htmlFor="ack" className="text-[11.5px] text-orange-400/90 leading-relaxed cursor-pointer select-none">
-              <strong>Zero-Knowledge Security:</strong> I understand that my Master PIN is used to locally encrypt my data. <strong>If I forget this PIN, my vault cannot be recovered by anyone</strong>, including Duely.
+              <strong>Zero-Knowledge Security:</strong> I understand that my Master PIN is used to locally encrypt my data. <strong>If I forget this PIN, my vault cannot be recovered by anyone</strong>.
             </label>
           </div>
         )}

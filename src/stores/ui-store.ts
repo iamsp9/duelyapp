@@ -1,8 +1,9 @@
+// src/stores/ui-store.ts
 "use client";
 
 import { create } from "zustand";
 
-export type AppTab = "home" | "cards" | "reports" | "settings";
+export type AppTab = "home" | "bills" | "cards" | "reports" | "settings";
 
 interface UIStore {
   tab: AppTab;
@@ -23,9 +24,10 @@ interface UIStore {
   isBackupOpen: boolean;
   setBackupOpen: (open: boolean) => void;
 
-  // Modern UI Delete confirmation toggle
   isDeleteConfirmOpen: boolean;
   setDeleteConfirmOpen: (open: boolean) => void;
+
+  closeAllModals: () => void;
 }
 
 export const useUIStore = create<UIStore>((set) => ({
@@ -49,4 +51,13 @@ export const useUIStore = create<UIStore>((set) => ({
 
   isDeleteConfirmOpen: false,
   setDeleteConfirmOpen: (open) => set({ isDeleteConfirmOpen: open }),
+
+  closeAllModals: () => set({ 
+    isManageCardsOpen: false, 
+    isCardFormOpen: false, 
+    isProfileOpen: false, 
+    isBackupOpen: false 
+  }),
+
 }));
+

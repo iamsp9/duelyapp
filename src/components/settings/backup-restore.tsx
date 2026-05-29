@@ -11,20 +11,19 @@ import { toBase64, fromBase64 } from "@/lib/crypto/encoding";
 export function BackupRestoreSettings() {
   const { user } = useAuth();
   
-  // Pull state and setter from Zustand
+  // Pull dual-vault state and setter from Zustand
   const vault = useVaultStore((state) => state.vault);
+  const archiveVault = useVaultStore((state) => state.archiveVault);
   const secret = useVaultStore((state) => state.secret);
-  const setVault = useVaultStore((state) => state.setVault);
+  const setVaults = useVaultStore((state) => state.setVaults);
 
   const [pinInput, setPinInput] = useState("");
   const [showPinModal, setShowPinModal] = useState(false);
   const [action, setAction] = useState<"backup" | "restore" | null>(null);
   const [error, setError] = useState("");
   
-  // Custom Toast State
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
 
-  // Ref for the hidden file input
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const showToast = (message: string, type: "success" | "error") => {
@@ -46,7 +45,6 @@ export function BackupRestoreSettings() {
     setShowPinModal(true);
   };
 
-  // Verifies PIN against the current session's secret
   const handlePinSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (pinInput !== secret) {
@@ -63,7 +61,6 @@ export function BackupRestoreSettings() {
     }
   };
 
-  // Generates and downloads the securely encrypted .duely file
   const executeBackup = async () => {
     try {
       if (!user?.email) {
@@ -71,16 +68,19 @@ export function BackupRestoreSettings() {
         return;
       }
 
-      // 1. Generate salt and derive encryption key using user's email
       const salt = crypto.getRandomValues(new Uint8Array(16));
       const key = await deriveKey(user.email, salt);
       
-      // 2. Encrypt the vault state
-      const { ciphertext, iv } = await encryptData(key, vault);
+      // Combine both vaults for the backup
+      const backupData = {
+        vault,
+        archiveVault
+      };
 
-      // 3. Create a payload representing the encrypted backup
+      const { ciphertext, iv } = await encryptData(key, backupData);
+
       const backupPayload = {
-        version: 2,
+        version: 3, // Bumped to version 3 for dual-vault architecture
         ciphertext,
         iv,
         salt: toBase64(salt.buffer as ArrayBuffer),
@@ -94,7 +94,7 @@ export function BackupRestoreSettings() {
       a.href = url;
       
       const date = new Date().toISOString().split("T")[0];
-      a.download = `duely-backup-${date}.duely`; // Proprietary extension
+      a.download = `duely-backup-${date}.duely`;
       
       document.body.appendChild(a);
       a.click();
@@ -108,7 +108,6 @@ export function BackupRestoreSettings() {
     }
   };
 
-  // Parses and decrypts the uploaded .duely file and updates the vault
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -124,8 +123,8 @@ export function BackupRestoreSettings() {
 
       let vaultDataToRestore;
 
-      // Check if it's the new encrypted format (version 2)
-      if (parsedData.version === 2 && parsedData.ciphertext) {
+      // Check if it's the new encrypted format (version 3)
+      if (parsedData.version === 3 && parsedData.ciphertext) {
         if (!user?.email) {
           showToast("You must be logged in to restore a secure backup.", "error");
           return;
@@ -136,23 +135,46 @@ export function BackupRestoreSettings() {
           const key = await deriveKey(user.email, salt);
           vaultDataToRestore = await decryptData(key, parsedData.ciphertext, parsedData.iv);
         } catch (decryptionError: any) {
+          showToast("Decryption failed. Ensure you are using the same email.", "error");
+          return;
+        }
+      } 
+      // Legacy Version 2
+      else if (parsedData.version === 2 && parsedData.ciphertext) {
+         if (!user?.email) {
+          showToast("You must be logged in to restore a secure backup.", "error");
+          return;
+        }
+        try {
+          const salt = fromBase64(parsedData.salt);
+          const key = await deriveKey(user.email, salt);
+          vaultDataToRestore = await decryptData(key, parsedData.ciphertext, parsedData.iv);
+        } catch (decryptionError: any) {
           showToast("Decryption failed.", "error");
           return;
         }
-      } else {
-        // Fallback: Retain backward compatibility for older plain-text unencrypted backups
+      }
+      else {
+        // Fallback: Allows importing unencrypted raw JSON for testing/dummy data
         vaultDataToRestore = parsedData;
       }
 
-      // Basic validation to ensure we're injecting the right state shape
-      if (!vaultDataToRestore || !Array.isArray(vaultDataToRestore.cards)) {
+      // Route the restored data to the correct state structures
+      if (vaultDataToRestore.vault && vaultDataToRestore.archiveVault) {
+        // Version 3 Structure
+        setVaults(vaultDataToRestore.vault, vaultDataToRestore.archiveVault);
+        showToast("Dual-vault restored successfully!", "success");
+      } else if (vaultDataToRestore.cards) {
+        // Legacy Version 2 Structure
+        setVaults({ cards: vaultDataToRestore.cards }, { archivedBills: vaultDataToRestore.archivedCards || [] });
+        showToast("Legacy vault restored successfully!", "success");
+      } else {
         throw new Error("Invalid vault data structure");
       }
 
-      setVault(vaultDataToRestore);
-      showToast("Vault restored successfully!", "success");
     } catch (err: any) {
-      showToast("Failed to restore data.", "error");
+      console.error(err);
+      showToast("Failed to restore data. File may be corrupted.", "error");
     } finally {
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
@@ -162,7 +184,6 @@ export function BackupRestoreSettings() {
 
   return (
     <div className="space-y-4 relative">
-      {/* Toast Notification */}
       {toast && (
         <div className="absolute -top-12 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-lg bg-neutral-900 border border-neutral-800 px-4 py-3 shadow-lg animate-in slide-in-from-top-2 duration-300 w-max max-w-[90%] whitespace-nowrap">
           {toast.type === "success" ? (
@@ -174,7 +195,6 @@ export function BackupRestoreSettings() {
         </div>
       )}
 
-      {/* Disclaimer Section */}
       <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 p-4 text-sm text-blue-400">
         <h4 className="font-semibold mb-1 flex items-center gap-2">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
@@ -182,11 +202,10 @@ export function BackupRestoreSettings() {
         </h4>
         <p>
           Local backups are exported as <code className="bg-blue-500/20 px-1 rounded">.duely</code> files.
-          <strong> These files are securely encrypted</strong> using your current account email <span className="font-medium text-blue-300">({user?.email || "not logged in"})</span>. You will need to be logged in with this same email to restore the backup in the future.
+          <strong> These files are securely encrypted</strong> using your current account email <span className="font-medium text-blue-300">({user?.email || "not logged in"})</span>.
         </p>
       </div>
 
-      {/* Action Buttons */}
       <div className="flex flex-col sm:flex-row gap-3">
         <button
           onClick={handleInitiateBackup}
@@ -202,7 +221,6 @@ export function BackupRestoreSettings() {
         </button>
       </div>
 
-      {/* Hidden File Input for Restore */}
       <input
         type="file"
         accept=".duely"
@@ -211,7 +229,6 @@ export function BackupRestoreSettings() {
         className="hidden"
       />
 
-      {/* PIN Verification Modal */}
       {showPinModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
           <div className="w-full max-w-sm rounded-xl border border-neutral-800 bg-[#020817] p-6 shadow-2xl">

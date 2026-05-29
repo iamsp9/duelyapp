@@ -1,6 +1,8 @@
 // src/types/vault.ts
 
-export type VaultMode = "v1" | "v2" | string; // Adjust strings to match your actual crypto versioning/modes
+export type VaultMode = "v1" | "v2" | string;
+
+export type VaultType = "main" | "archive";
 
 export interface EncryptedVault {
   ciphertext: string;

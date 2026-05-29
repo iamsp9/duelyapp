@@ -1,18 +1,35 @@
+// src/types/card.ts
 export type PaymentStatus = "unpaid" | "partial" | "paid";
 
 export type BillingFrequencyType = "monthly" | "every_x_months" | "every_x_days";
 
 export interface BillingFrequency {
   type: BillingFrequencyType;
-  value?: number; // x for every_x_months or every_x_days
+  value?: number;
 }
 
 export interface PaymentHistoryItem {
-  amount?: number;
+  id: string; // Unique ID for the payment
+  amount: number;
   note?: string;
-  date?: string;
-  ts?: string;
-  text?: string;
+  date: string; // ISO string when payment was made
+  ts: string; // timestamp
+}
+
+// NEW: Statement-centric Bill Cycle
+export interface BillCycle {
+  id: string; // Format: <CARD_ID>-<YYYYMMDD>
+  cardId: string;
+  statementDate: string; // The generated bill date (e.g., 2026-05-13)
+  dueDate: string; // The exact calculated due date (e.g., 2026-06-02)
+  
+  billedAmount: number | string; // User inputs this when prompted
+  paidAmount: number;
+  
+  status: PaymentStatus;
+  history: PaymentHistoryItem[];
+  
+  isArchived?: boolean; // If true, it gets moved to the archive vault
 }
 
 export interface CreditCard {
@@ -20,33 +37,19 @@ export interface CreditCard {
   name: string;
   billDay: number;
   dueAfterDays: number;
-  dueDay: number;
-
-  billingFrequency?: BillingFrequency; // NEW: billing frequency config
-
-  totalBill: number | string; // Supports empty string like the vanilla input
-  paidAmount?: number;
-  outstandingAmount?: number;
-
-  status: PaymentStatus;
-  statusOverride?: PaymentStatus;
-
-  notes?: string;
-  history?: PaymentHistoryItem[];
-  payments?: any[]; // Keep for backwards compatibility if needed
-
+  billingFrequency?: BillingFrequency;
+  
   disabled?: boolean;
-  disabledAt?: string; // ISO timestamp when card was disabled
+  disabledAt?: string;
 
-  // Track when current cycle bill was set (for pre-disable preservation)
-  currentCycleBillSetAt?: string;
+  // REPLACED: No more flat totalBill or history here. 
+  // All active and overdue bills live in this array.
+  activeBills: BillCycle[]; 
+  
+  notes?: string;
 }
 
-export interface ArchivedCard {
-  id: string;
-  name: string;
-  archivedAt: string;
-  history: PaymentHistoryItem[];
-  totalBilled?: number; // total billed across lifetime
-  billingFrequency?: BillingFrequency;
+// For the Archive Vault decrypted payload
+export interface ArchiveVaultData {
+  archivedBills: BillCycle[];
 }

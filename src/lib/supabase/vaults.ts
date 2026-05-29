@@ -1,7 +1,8 @@
+// src/lib/supabase/vaults.ts
 import { createClient } from "./client";
-import type { EncryptedVault } from "@/types/vault";
+import type { EncryptedVault, VaultType } from "@/types/vault";
 
-export async function saveVault(vault: EncryptedVault) {
+export async function saveVault(vault: EncryptedVault, vaultType: VaultType = 'main') {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
@@ -13,12 +14,13 @@ export async function saveVault(vault: EncryptedVault) {
     .from("vaults")
     .upsert({
       user_id: user.id,
+      vault_type: vaultType,
       ciphertext: vault.ciphertext,
       iv: vault.iv,
       metadata: vault.metadata,
       updated_at: new Date().toISOString()
     }, {
-      onConflict: 'user_id'
+      onConflict: 'user_id, vault_type'
     });
 
   if (error) {
@@ -26,7 +28,7 @@ export async function saveVault(vault: EncryptedVault) {
   }
 }
 
-export async function loadVault() {
+export async function loadVault(vaultType: VaultType = 'main') {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
@@ -38,6 +40,7 @@ export async function loadVault() {
     .from("vaults")
     .select("ciphertext, iv, metadata")
     .eq("user_id", user.id)
+    .eq("vault_type", vaultType)
     .maybeSingle();
 
   if (error) {
@@ -47,7 +50,6 @@ export async function loadVault() {
   return data;
 }
 
-// Schedules account for deletion by adding a timestamp 7 days into the future
 export async function scheduleAccountDeletion() {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -57,6 +59,7 @@ export async function scheduleAccountDeletion() {
     .from("vaults")
     .select("metadata")
     .eq("user_id", user.id)
+    .eq("vault_type", "main")
     .single();
   
   if (vault) {
@@ -67,13 +70,13 @@ export async function scheduleAccountDeletion() {
     const { error } = await supabase
       .from("vaults")
       .update({ metadata: newMetadata })
-      .eq("user_id", user.id);
+      .eq("user_id", user.id)
+      .eq("vault_type", "main");
       
     if (error) throw error;
   }
 }
 
-// Reactivates the account if the user logs back in during the 7-day window
 export async function cancelAccountDeletion() {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -83,6 +86,7 @@ export async function cancelAccountDeletion() {
     .from("vaults")
     .select("metadata")
     .eq("user_id", user.id)
+    .eq("vault_type", "main")
     .single();
   
   if (vault && vault.metadata?.delete_scheduled_at) {
@@ -92,7 +96,8 @@ export async function cancelAccountDeletion() {
     const { error } = await supabase
       .from("vaults")
       .update({ metadata: newMetadata })
-      .eq("user_id", user.id);
+      .eq("user_id", user.id)
+      .eq("vault_type", "main");
       
     if (error) throw error;
   }
@@ -103,6 +108,7 @@ export async function wipeUserVault() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Not authenticated");
 
+  // This purposely deletes both 'main' and 'archive' by only matching user.id
   const { error } = await supabase
     .from("vaults")
     .delete()

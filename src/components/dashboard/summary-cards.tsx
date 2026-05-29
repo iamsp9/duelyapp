@@ -1,7 +1,8 @@
+// src/components/dashboard/summary-cards.tsx
 "use client";
 
 import { useVaultStore } from "@/stores/vault-store";
-import { getSummary, isActive, computeStatus } from "@/lib/engine/cards";
+import { getSummary, computeBillStatus } from "@/lib/engine/cards";
 
 function formatINR(value: number) {
   return new Intl.NumberFormat("en-IN", {
@@ -12,6 +13,12 @@ function formatINR(value: number) {
 export function SummaryCards() {
   const cards = useVaultStore((s) => s.vault.cards);
   const summary = getSummary(cards);
+
+  // Calculate the actual number of pending bills across all un-disabled cards
+  const totalPendingBills = (cards || [])
+    .filter((c) => !c.disabled)
+    .flatMap((c) => c.activeBills || [])
+    .filter((bill) => computeBillStatus(bill) !== "paid").length;
 
   const items = [
     {
@@ -30,10 +37,8 @@ export function SummaryCards() {
       color: "text-red-400",
     },
     {
-      label: "Pending",
-      value: String(
-        cards.filter((c) => isActive(c) && computeStatus(c) !== "paid").length
-      ),
+      label: "Pending Bills",
+      value: String(totalPendingBills),
       color: "text-orange-400",
     },
   ];
@@ -48,7 +53,6 @@ export function SummaryCards() {
           <div className="text-xs uppercase tracking-wider text-slate-500">
             {item.label}
           </div>
-
           <div
             className={`mt-3 text-3xl md:text-4xl font-bold ${item.color}`}
           >
@@ -59,3 +63,4 @@ export function SummaryCards() {
     </div>
   );
 }
+

@@ -1,11 +1,14 @@
 // src/lib/engine/cards.ts
-import type { CreditCard, PaymentStatus, BillingFrequency } from "@/types/card";
+import type { CreditCard, BillCycle, PaymentStatus, BillingFrequency } from "@/types/card";
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-export function calculateDueDay(billDay: number, dueAfterDays: number) {
-  const total = billDay + dueAfterDays;
-  return total > 30 ? total - 30 : total;
+// --- CALENDAR & DATE MATH ---
+
+export function getExactDueDate(statementDate: Date, dueAfterDays: number): Date {
+  const due = new Date(statementDate);
+  due.setDate(due.getDate() + dueAfterDays);
+  return due;
 }
 
 export function formatCurrency(amount: number | string) {
@@ -17,199 +20,125 @@ export function formatCurrency(amount: number | string) {
   }).format(num);
 }
 
-/**
- * Get the billing frequency label for display
- */
-export function getBillingFrequencyLabel(freq?: BillingFrequency): string {
-  if (!freq || freq.type === 'monthly') return 'Monthly';
-  if (freq.type === 'every_x_months') return `Every ${freq.value} months`;
-  if (freq.type === 'every_x_days') return `Every ${freq.value} days`;
-  return 'Monthly';
-}
+// --- BILL CYCLE LOGIC ---
 
-/**
- * Check if a card should generate a new bill today based on its billing frequency.
- * Returns true if today is a bill generation day.
- */
-export function isBillGenerationDay(card: CreditCard): boolean {
-  const today = new Date();
-  const todayDay = today.getDate();
-  const freq = card.billingFrequency;
+export function getNextExpectedBillDate(card: CreditCard): Date {
+  const lastBill = card.activeBills?.length > 0 
+    ? new Date(card.activeBills[card.activeBills.length - 1].statementDate)
+    : new Date(new Date().getFullYear(), new Date().getMonth() - 1, card.billDay);
 
-  if (!freq || freq.type === 'monthly') {
-    return todayDay === card.billDay;
-  }
-
-  if (freq.type === 'every_x_days') {
-    return todayDay === card.billDay;
-  }
+  const freq = card.billingFrequency || { type: 'monthly' };
+  const next = new Date(lastBill);
 
   if (freq.type === 'every_x_months') {
-    return todayDay === card.billDay;
+    next.setMonth(next.getMonth() + (freq.value || 2));
+  } else if (freq.type === 'every_x_days') {
+    next.setDate(next.getDate() + (freq.value || 30));
+  } else {
+    // Default Monthly
+    next.setMonth(next.getMonth() + 1);
   }
-
-  return todayDay === card.billDay;
+  return next;
 }
 
-/**
- * Get the next bill date for a card based on its frequency
- */
-export function getNextBillDate(card: CreditCard): Date {
+export function spawnMissingBills(card: CreditCard): CreditCard {
+  if (card.disabled) return card;
+
   const today = new Date();
-  const freq = card.billingFrequency;
-
-  if (!freq || freq.type === 'monthly') {
-    // Monthly billing on billDay
-    const thisMonth = new Date(today.getFullYear(), today.getMonth(), card.billDay);
-    today.setHours(0, 0, 0, 0);
-    if (thisMonth >= today) return thisMonth;
-    return new Date(today.getFullYear(), today.getMonth() + 1, card.billDay);
-  }
-
-  if (freq.type === 'every_x_months') {
-    const x = freq.value || 2;
-    const thisMonth = new Date(today.getFullYear(), today.getMonth(), card.billDay);
-    today.setHours(0, 0, 0, 0);
-    if (thisMonth >= today) return thisMonth;
-    return new Date(today.getFullYear(), today.getMonth() + x, card.billDay);
-  }
-
-  if (freq.type === 'every_x_days') {
-    const x = freq.value || 30;
-    // Find the next occurrence: starting from billDay of current month
-    const thisMonth = new Date(today.getFullYear(), today.getMonth(), card.billDay);
-    today.setHours(0, 0, 0, 0);
-    if (thisMonth >= today) return thisMonth;
-    // Add x days from this month's bill date
-    const next = new Date(thisMonth);
-    next.setDate(next.getDate() + x);
-    return next;
-  }
-
-  // Default fallback
-  const thisMonth = new Date(today.getFullYear(), today.getMonth(), card.billDay);
-  if (thisMonth >= today) return thisMonth;
-  return new Date(today.getFullYear(), today.getMonth() + 1, card.billDay);
-}
-
-export function getDueDate(card: CreditCard) {
-  const today = new Date();
-  let m = today.getMonth();
-  let y = today.getFullYear();
-  if ((card.dueDay || 0) <= (card.billDay || 0)) {
-    m++;
-    if (m > 11) {
-      m = 0;
-      y++;
-    }
-  }
-  return new Date(y, m, card.dueDay || 0);
-}
-
-export function getDTD(card: CreditCard) {
-  const today = new Date();
-  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const diff = getDueDate(card).getTime() - todayStart.getTime();
-  return Math.ceil(diff / 86400000);
-}
-
-/**
- * Determine if a card is "active" (in its billing cycle) today.
- * For disabled cards, we check if it WAS active before being disabled
- * (to show existing bills but not new ones).
- */
-export function isActive(card: CreditCard) {
-  const today = new Date().getDate();
-
-  if (card.disabled) {
-    // If card is disabled, only show it as active if:
-    // 1. The bill was already set before disabling (currentCycleBillSetAt exists)
-    // 2. AND the bill amount is non-empty (has a real bill to show)
-    const hasBillBeforeDisable =
-      card.currentCycleBillSetAt &&
-      card.totalBill !== '' &&
-      card.totalBill !== null &&
-      card.totalBill !== undefined &&
-      Number(card.totalBill) > 0;
-
-    return hasBillBeforeDisable === true;
-  }
-
-  return today >= (card.billDay || 0);
-}
-
-/**
- * Check if a card should appear in future/upcoming section.
- * Disabled cards never appear in upcoming.
- */
-export function isUpcoming(card: CreditCard) {
-  if (card.disabled) return false;
-  const today = new Date().getDate();
-  return today < (card.billDay || 0);
-}
-
-export function getPaidTotal(card: CreditCard) {
-  return (card.history || []).reduce((sum, h) => sum + Number(h.amount || 0), 0);
-}
-
-export function getOutstanding(card: CreditCard) {
-  const bill = Number(card.totalBill || 0);
-  const paid = getPaidTotal(card);
-  return Math.max(0, bill - paid);
-}
-
-export function computeStatus(card: CreditCard): PaymentStatus {
-  if (card.statusOverride) return card.statusOverride as PaymentStatus;
+  const nextExpected = getNextExpectedBillDate(card);
   
-  const bill = Number(card.totalBill || 0);
-  const total = getPaidTotal(card);
+  // Only spawn if today is >= the expected date and it hasn't been spawned yet
+  if (today < nextExpected) return card;
 
-  // FIXED: Removed the invalid `!== null` check as it violates the interface type bounds
-  if (card.totalBill !== '' && bill <= 0) return 'paid';
-  if (bill > 0 && total >= bill) return 'paid';
-  if (total > 0) return 'partial';
+  const dateStr = nextExpected.toISOString().split('T')[0];
+  const billExists = card.activeBills?.some(b => b.statementDate === dateStr);
+  
+  if (!billExists) {
+    const dueDate = getExactDueDate(nextExpected, card.dueAfterDays);
+    const newBill: BillCycle = {
+      id: `${card.id}-${dateStr.replace(/-/g, '')}`,
+      cardId: card.id,
+      statementDate: dateStr,
+      dueDate: dueDate.toISOString().split('T')[0],
+      billedAmount: "",
+      paidAmount: 0,
+      status: "unpaid",
+      history: []
+    };
+    
+    return { ...card, activeBills: [...(card.activeBills || []), newBill] };
+  }
+  return card;
+}
+
+export function getPaidTotal(bill: BillCycle) {
+  return (bill.history || []).reduce((sum, h) => sum + Number(h.amount || 0), 0);
+}
+
+export function getOutstanding(bill: BillCycle) {
+  const billed = Number(bill.billedAmount || 0);
+  const paid = getPaidTotal(bill);
+  return Math.max(0, billed - paid);
+}
+
+export function computeBillStatus(bill: BillCycle): PaymentStatus {
+  const billed = Number(bill.billedAmount || 0);
+  const totalPaid = getPaidTotal(bill);
+
+  // If user hasn't entered a bill amount yet (it's empty), it's not paid
+  if (bill.billedAmount === "" || bill.billedAmount === null) return 'unpaid';
+  
+  if (billed > 0 && totalPaid >= billed) return 'paid';
+  if (totalPaid > 0) return 'partial';
   return 'unpaid';
 }
 
-// Exact Vanilla Sorting Translators
-export function sortByDue(list: CreditCard[]) {
-  return list.slice().sort((a, b) => getDTD(a) - getDTD(b));
-}
+/**
+ * Identifies which bills are fully paid and ready to be moved to the Archive Vault.
+ */
+export function extractArchivableBills(card: CreditCard): { 
+  updatedCard: CreditCard, 
+  billsToArchive: BillCycle[] 
+} {
+  const activeBills: BillCycle[] = [];
+  const billsToArchive: BillCycle[] = [];
 
-export function sortByPriority(list: CreditCard[]) {
-  return list.slice().sort((a, b) => {
-    const paidA = computeStatus(a) === 'paid';
-    const paidB = computeStatus(b) === 'paid';
-    if (paidA !== paidB) return paidA ? 1 : -1;
-    return getDTD(a) - getDTD(b);
-  });
-}
-
-export function sortByBillDate(list: CreditCard[]) {
-  return list.slice().sort((a, b) => {
-    const todayDay = new Date().getDate();
-    const da = (a.billDay || 0) >= todayDay ? (a.billDay || 0) : (a.billDay || 0) + 31;
-    const db = (b.billDay || 0) >= todayDay ? (b.billDay || 0) : (b.billDay || 0) + 31;
-    return da - db;
-  });
-}
-
-export function getDueBadge(card: CreditCard, active: boolean) {
-  if (!active) {
-    if (card.disabled) {
-      return { text: `Disabled`, classes: 'bg-gray-800 text-gray-500' };
+  (card.activeBills || []).forEach(bill => {
+    // A bill is only archived if it has a billed amount AND is fully paid
+    if (bill.billedAmount !== "" && computeBillStatus(bill) === 'paid') {
+      billsToArchive.push({ ...bill, isArchived: true });
+    } else {
+      activeBills.push(bill);
     }
-    return { text: `Bill ${card.billDay}th`, classes: 'bg-gray-800 text-gray-400' };
-  }
-  
-  const d = getDTD(card);
-  const due = getDueDate(card);
+  });
+
+  return {
+    updatedCard: { ...card, activeBills },
+    billsToArchive
+  };
+}
+
+// --- UI HELPERS ---
+
+export function getDTD(bill: BillCycle) {
   const today = new Date();
-  const ds = due.getDate() + (due.getMonth() !== today.getMonth() ? ' ' + MONTHS[due.getMonth()] : '');
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const dueDate = new Date(bill.dueDate);
+  const diff = dueDate.getTime() - todayStart.getTime();
+  return Math.ceil(diff / 86400000);
+}
+
+export function getDueBadge(bill: BillCycle) {
+  const d = getDTD(bill);
+  const due = new Date(bill.dueDate);
+  const ds = `${due.getDate()} ${MONTHS[due.getMonth()]}`;
   
-  if (computeStatus(card) === 'paid') return { text: `Paid (Due ${ds})`, classes: 'bg-green-900/30 text-green-400' };
-  if (d < 0) return { text: `Overdue ${Math.abs(d)}d`, classes: 'bg-red-900/30 text-red-400' };
-  if (d === 0) return { text: `Due today`, classes: 'bg-red-900/30 text-red-400' };
+  if (computeBillStatus(bill) === 'paid') return { text: `Paid (Due ${ds})`, classes: 'bg-green-900/30 text-green-400' };
+  
+  if (bill.billedAmount === "") return { text: `Statement Generated`, classes: 'bg-blue-900/30 text-blue-400' }; // Prompt for input
+  
+  if (d < 0) return { text: `Overdue ${Math.abs(d)}d`, classes: 'bg-red-900/30 text-red-400 font-bold' };
+  if (d === 0) return { text: `Due today`, classes: 'bg-red-900/30 text-red-400 font-bold' };
   if (d <= 2) return { text: `Due in ${d}d`, classes: 'bg-red-900/30 text-red-400' };
   if (d <= 5) return { text: `Due in ${d}d`, classes: 'bg-orange-900/30 text-orange-400' };
   if (d <= 7) return { text: `Due ${ds}`, classes: 'bg-yellow-900/30 text-yellow-400' };
@@ -217,25 +146,18 @@ export function getDueBadge(card: CreditCard, active: boolean) {
   return { text: `Due ${ds}`, classes: 'bg-green-900/30 text-green-400' };
 }
 
-export function getGlowClass(card: CreditCard, active: boolean) {
-  if (!active || computeStatus(card) === 'paid') return 'border-white/10';
-  const d = getDTD(card);
-  if (d < 0 || d <= 2) return 'border-red-500/80 shadow-[0_0_0_3px_rgba(239,68,68,0.1)]';
-  if (d <= 5) return 'border-orange-500/80 shadow-[0_0_0_3px_rgba(249,115,22,0.1)]';
-  if (d <= 7) return 'border-yellow-500/80 shadow-[0_0_0_3px_rgba(234,179,8,0.1)]';
-  return 'border-white/10';
-}
-
 export function getSummary(cards: CreditCard[]) {
-  // Only include non-disabled active cards in summary
-  const active = cards.filter(c => isActive(c));
-  
   let billed = 0;
   let paid = 0;
   
-  active.forEach(c => {
-    billed += Number(c.totalBill || 0);
-    paid += getPaidTotal(c);
+  (cards || []).forEach(card => {
+    // Only count bills for active (non-disabled) cards
+    if (!card.disabled) {
+      (card.activeBills || []).forEach(bill => {
+        billed += Number(bill.billedAmount || 0);
+        paid += getPaidTotal(bill);
+      });
+    }
   });
   
   const outstanding = Math.max(0, billed - paid);
@@ -247,4 +169,24 @@ export function getSummary(cards: CreditCard[]) {
     outstanding,
     progress
   };
+}
+/**
+ * Calculates the exact next calendar billing date for a credit card.
+ */
+export function getNextBillDate(card: CreditCard): Date {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  
+  const currentYear = today.getFullYear();
+  const currentMonth = today.getMonth();
+  
+  // Create a billing target for the current month
+  const thisMonthBill = new Date(currentYear, currentMonth, card.billDay);
+  
+  if (thisMonthBill > today) {
+    return thisMonthBill;
+  }
+  
+  // If the billing day passed, the next bill is next month
+  return new Date(currentYear, currentMonth + 1, card.billDay);
 }
