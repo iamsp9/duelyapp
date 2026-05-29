@@ -4,6 +4,7 @@
 import { useMemo, useState } from "react";
 import { useVaultStore } from "@/stores/vault-store";
 import { useUIStore } from "@/stores/ui-store";
+import { useCurrencyStore, formatWithCurrency } from "@/stores/currency-store";
 import {
   getNextBillDate,
   computeBillStatus,
@@ -33,8 +34,12 @@ export function BillsView() {
   const deletedCards   = archiveVault?.deletedCards   || [];
   const setManageCardsOpen = useUIStore((s) => s.setManageCardsOpen);
 
+  const { getCurrency } = useCurrencyStore();
+  const currency = getCurrency();
+
+  const fmt = (v: number) => formatWithCurrency(v, currency);
+
   const [clearedExpanded, setClearedExpanded] = useState(false);
-  const [upcomingExpanded, setUpcomingExpanded] = useState(false);
 
   const today = useMemo(() => {
     const d = new Date(); d.setHours(0,0,0,0); return d;
@@ -51,10 +56,10 @@ export function BillsView() {
   }, [cards]);
 
   // Priority buckets
-  const overdue     = useMemo(() => allActive.filter(({ bill, dtd }) => dtd < 0  && bill.billedAmount !== "").sort((a,b) => a.dtd - b.dtd), [allActive]);
-  const dueSoon     = useMemo(() => allActive.filter(({ bill, dtd }) => dtd >= 0 && dtd <= 7  && bill.billedAmount !== "").sort((a,b) => a.dtd - b.dtd), [allActive]);
+  const overdue       = useMemo(() => allActive.filter(({ bill, dtd }) => dtd < 0  && bill.billedAmount !== "").sort((a,b) => a.dtd - b.dtd), [allActive]);
+  const dueSoon       = useMemo(() => allActive.filter(({ bill, dtd }) => dtd >= 0 && dtd <= 7  && bill.billedAmount !== "").sort((a,b) => a.dtd - b.dtd), [allActive]);
   const upcomingBills = useMemo(() => allActive.filter(({ bill, dtd }) => dtd > 7 && bill.billedAmount !== "").sort((a,b) => a.dtd - b.dtd), [allActive]);
-  const needsAmount = useMemo(() => allActive.filter(({ bill }) => bill.billedAmount === "" || bill.billedAmount === null).sort((a,b) => a.dtd - b.dtd), [allActive]);
+  const needsAmount   = useMemo(() => allActive.filter(({ bill }) => bill.billedAmount === "" || bill.billedAmount === null).sort((a,b) => a.dtd - b.dtd), [allActive]);
 
   // ── Upcoming statement generation (next 7 days) ───────────────────────────
   const upcomingGeneration = useMemo(() => {
@@ -66,21 +71,36 @@ export function BillsView() {
     });
   }, [cards, today]);
 
-  // ── Last cleared (most recent per card, active-card-only) ─────────────────
-  const clearedBills = useMemo<BillCycle[]>(() => {
+  // ── Last cleared: most recent FULLY PAID archived bill per active card ────
+  // Shows the single most recent fully-paid statement for each active (non-deleted) card.
+  const clearedBills = useMemo<(BillCycle & { cardName: string })[]>(() => {
     const map = new Map<string, BillCycle>();
+
     archivedBills.forEach((bill) => {
+      // Skip bills belonging to deleted (archived) cards
       const isDeleted  = deletedCards.some((dc) => dc.id === bill.cardId);
+      // Only show bills for currently active cards
       const cardExists = cards.some((c) => c.id === bill.cardId);
       if (!cardExists || isDeleted) return;
+
       const existing = map.get(bill.cardId);
-      if (!existing || bill.statementDate > existing.statementDate) map.set(bill.cardId, bill);
+      if (!existing || bill.statementDate > existing.statementDate) {
+        map.set(bill.cardId, bill);
+      }
     });
-    return Array.from(map.values()).sort((a, b) => b.statementDate.localeCompare(a.statementDate));
+
+    return Array.from(map.values())
+      .sort((a, b) => b.statementDate.localeCompare(a.statementDate))
+      .map((bill) => ({
+        ...bill,
+        cardName: cards.find((c) => c.id === bill.cardId)?.name ?? "Unknown",
+      }));
   }, [archivedBills, cards, deletedCards]);
 
-  const CLEARED_PREVIEW = 3;
+  // Show 5 by default, expand if more
+  const CLEARED_PREVIEW = 5;
   const clearedVisible  = clearedExpanded ? clearedBills : clearedBills.slice(0, CLEARED_PREVIEW);
+  const hasMoreCleared  = clearedBills.length > CLEARED_PREVIEW;
 
   const isEmpty = allActive.length === 0 && upcomingGeneration.length === 0 && clearedBills.length === 0;
 
@@ -111,6 +131,7 @@ export function BillsView() {
           count={overdue.length}
           total={overdue.reduce((s,{bill}) => s + Math.max(0, Number(bill.billedAmount||0) - getPaidTotal(bill)), 0)}
           totalColor="text-red-400"
+          fmt={fmt}
         >
           {overdue.map(({ card, bill }) => (
             <CardItem key={bill.id} card={card} bill={bill} />
@@ -126,6 +147,7 @@ export function BillsView() {
           count={dueSoon.length}
           total={dueSoon.reduce((s,{bill}) => s + Math.max(0, Number(bill.billedAmount||0) - getPaidTotal(bill)), 0)}
           totalColor="text-orange-400"
+          fmt={fmt}
         >
           {dueSoon.map(({ card, bill }) => (
             <CardItem key={bill.id} card={card} bill={bill} />
@@ -143,6 +165,7 @@ export function BillsView() {
           totalColor="text-slate-300"
           collapsible
           defaultCollapsed={upcomingBills.length > 3}
+          fmt={fmt}
         >
           {upcomingBills.map(({ card, bill }) => (
             <CardItem key={bill.id} card={card} bill={bill} />
@@ -208,23 +231,24 @@ export function BillsView() {
             <div className="flex items-center gap-1.5">
               <CheckCircle2 className="size-3.5 text-emerald-500/60" />
               <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
-                Last cleared ({clearedBills.length})
+                Last cleared — one per card ({clearedBills.length})
               </p>
             </div>
           </div>
 
           <div className="flex flex-col gap-1.5">
-            {clearedVisible.map((bill) => {
-              const parentCard = cards.find((c) => c.id === bill.cardId);
-              if (!parentCard) return null;
-              const paid = getPaidTotal(bill);
-              return (
-                <ClearedBillRow key={bill.id} cardName={parentCard.name} bill={bill} paid={paid} />
-              );
-            })}
+            {clearedVisible.map((bill) => (
+              <ClearedBillRow
+                key={bill.id}
+                cardName={bill.cardName}
+                bill={bill}
+                paid={getPaidTotal(bill)}
+                fmt={fmt}
+              />
+            ))}
           </div>
 
-          {clearedBills.length > CLEARED_PREVIEW && (
+          {hasMoreCleared && (
             <button
               onClick={() => setClearedExpanded((v) => !v)}
               className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-white/5 bg-transparent text-[12px] font-medium text-slate-500 hover:text-slate-300 hover:bg-white/5 transition-colors active:bg-white/5"
@@ -245,9 +269,9 @@ export function BillsView() {
 // ─── Cleared Bill Row ─────────────────────────────────────────────────────────
 
 function ClearedBillRow({
-  cardName, bill, paid,
+  cardName, bill, paid, fmt,
 }: {
-  cardName: string; bill: BillCycle; paid: number;
+  cardName: string; bill: BillCycle; paid: number; fmt: (v: number) => string;
 }) {
   const statDate = new Date(bill.statementDate).toLocaleDateString("en-IN", {
     day: "numeric", month: "short", year: "2-digit",
@@ -265,7 +289,7 @@ function ClearedBillRow({
         </p>
       </div>
       <div className="text-right shrink-0">
-        <p className="text-[14px] font-bold text-emerald-400">{formatCurrency(paid)}</p>
+        <p className="text-[14px] font-bold text-emerald-400">{fmt(paid)}</p>
         <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-600 mt-0.5">Paid</p>
       </div>
     </div>
@@ -275,7 +299,7 @@ function ClearedBillRow({
 // ─── Section wrapper ──────────────────────────────────────────────────────────
 
 function Section({
-  icon, label, count, total, totalColor, children, collapsible = false, defaultCollapsed = false,
+  icon, label, count, total, totalColor, children, collapsible = false, defaultCollapsed = false, fmt,
 }: {
   icon: React.ReactNode;
   label: string;
@@ -285,6 +309,7 @@ function Section({
   children: React.ReactNode;
   collapsible?: boolean;
   defaultCollapsed?: boolean;
+  fmt: (v: number) => string;
 }) {
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
 
@@ -302,7 +327,7 @@ function Section({
         </div>
         <div className="flex items-center gap-2">
           {total > 0 && (
-            <p className={`text-[12px] font-semibold ${totalColor}`}>{formatCurrency(total)}</p>
+            <p className={`text-[12px] font-semibold ${totalColor}`}>{fmt(total)}</p>
           )}
           {collapsible && (
             collapsed

@@ -28,13 +28,6 @@ function getNextDateForDay(dayOfMonth: number): Date {
   return new Date(year, month + 1, dayOfMonth);
 }
 
-function getNextDueDate(billDay: number, daysUntilDue: number): Date {
-  const next = getNextDateForDay(billDay);
-  const due = new Date(next);
-  due.setDate(due.getDate() + daysUntilDue);
-  return due;
-}
-
 function formatDate(date: Date): string {
   return date.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
 }
@@ -46,11 +39,19 @@ function getOrdinal(n: number) {
 }
 
 // ─── Billing Frequency Selector ───────────────────────────────────────────────
+//
+// Label rationale:
+//   "Monthly"      → unchanged, self-explanatory
+//   "Multi-Month"  → replaces "Every X Months" — shorter, clearer intent
+//                    (quarterly, bi-annual, etc.)
+//   "Fixed Interval" → replaces "Every X Days" — communicates a repeating
+//                    fixed-day cycle (weekly, fortnightly, etc.)
+//
 function BillingFrequencySelector({ value, onChange }: { value: BillingFrequency; onChange: (freq: BillingFrequency) => void }) {
-  const options: { type: BillingFrequency['type']; label: string }[] = [
-    { type: 'monthly', label: 'Monthly' },
-    { type: 'every_x_months', label: 'Every X Months' },
-    { type: 'every_x_days', label: 'Every X Days' },
+  const options: { type: BillingFrequency['type']; label: string; sublabel: string }[] = [
+    { type: 'monthly',        label: 'Monthly',         sublabel: 'Every month'       },
+    { type: 'every_x_months', label: 'Multi-Month',     sublabel: 'e.g. Quarterly'    },
+    { type: 'every_x_days',   label: 'Fixed Interval',  sublabel: 'e.g. Every 45 days' },
   ];
 
   return (
@@ -60,25 +61,94 @@ function BillingFrequencySelector({ value, onChange }: { value: BillingFrequency
           <button
             key={opt.type}
             type="button"
-            onClick={() => onChange({ ...value, type: opt.type, value: opt.type === 'monthly' ? undefined : (value.value || (opt.type === 'every_x_months' ? 2 : 7)) })}
-            className={`py-2 px-2 rounded-[8px] text-[11px] font-semibold transition-all ${value.type === opt.type ? 'bg-blue-500 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+            onClick={() => onChange({
+              ...value,
+              type: opt.type,
+              value: opt.type === 'monthly'
+                ? undefined
+                : (value.value || (opt.type === 'every_x_months' ? 2 : 7)),
+            })}
+            className={`flex flex-col items-center py-2 px-1 rounded-[8px] transition-all ${
+              value.type === opt.type
+                ? 'bg-blue-500 text-white shadow-sm'
+                : 'text-slate-400 hover:text-white hover:bg-white/5'
+            }`}
           >
-            {opt.label}
+            <span className="text-[11px] font-semibold leading-tight">{opt.label}</span>
+            <span className={`text-[9px] leading-tight mt-0.5 ${value.type === opt.type ? 'text-blue-100' : 'text-slate-600'}`}>
+              {opt.sublabel}
+            </span>
           </button>
         ))}
       </div>
+
       {value.type === 'every_x_months' && (
-        <div className="flex items-center gap-2 animate-in fade-in duration-150">
-          <label className="text-[12px] text-slate-400 shrink-0">Every</label>
-          <input type="number" min="2" max="24" value={value.value || 2} onChange={(e) => { const v = Math.max(2, Math.min(24, parseInt(e.target.value) || 2)); onChange({ ...value, value: v }); }} className="w-20 bg-[#1a2234] border border-white/10 rounded-[8px] px-3 py-2 text-[14px] text-white outline-none focus:border-blue-500 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+        <div className="flex items-center gap-2 animate-in fade-in duration-150 bg-[#0d1525] rounded-[10px] border border-white/10 px-3 py-2.5">
+          <label className="text-[12px] text-slate-400 shrink-0">Repeat every</label>
+          <input
+            type="number"
+            min="2"
+            max="24"
+            value={value.value || 2}
+            onChange={(e) => {
+              const v = Math.max(2, Math.min(24, parseInt(e.target.value) || 2));
+              onChange({ ...value, value: v });
+            }}
+            className="w-16 bg-[#1a2234] border border-white/10 rounded-[8px] px-3 py-1.5 text-[14px] text-white outline-none focus:border-blue-500 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+          />
           <label className="text-[12px] text-slate-400 shrink-0">months</label>
+          {/* Quick preset chips */}
+          <div className="flex gap-1.5 ml-auto">
+            {[2, 3, 6].map((n) => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => onChange({ ...value, value: n })}
+                className={`text-[10px] px-2 py-1 rounded-md font-medium transition-all ${
+                  value.value === n
+                    ? 'bg-blue-500/30 text-blue-300 border border-blue-500/40'
+                    : 'bg-white/5 text-slate-500 hover:text-slate-300 border border-white/10'
+                }`}
+              >
+                {n === 2 ? 'Bi-mo' : n === 3 ? 'Qtr' : 'Semi'}
+              </button>
+            ))}
+          </div>
         </div>
       )}
+
       {value.type === 'every_x_days' && (
-        <div className="flex items-center gap-2 animate-in fade-in duration-150">
-          <label className="text-[12px] text-slate-400 shrink-0">Every</label>
-          <input type="number" min="1" max="31" value={value.value || 7} onChange={(e) => { const v = Math.max(1, Math.min(31, parseInt(e.target.value) || 7)); onChange({ ...value, value: v }); }} className="w-20 bg-[#1a2234] border border-white/10 rounded-[8px] px-3 py-2 text-[14px] text-white outline-none focus:border-blue-500 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+        <div className="flex items-center gap-2 animate-in fade-in duration-150 bg-[#0d1525] rounded-[10px] border border-white/10 px-3 py-2.5">
+          <label className="text-[12px] text-slate-400 shrink-0">Repeat every</label>
+          <input
+            type="number"
+            min="1"
+            max="365"
+            value={value.value || 7}
+            onChange={(e) => {
+              const v = Math.max(1, Math.min(365, parseInt(e.target.value) || 7));
+              onChange({ ...value, value: v });
+            }}
+            className="w-16 bg-[#1a2234] border border-white/10 rounded-[8px] px-3 py-1.5 text-[14px] text-white outline-none focus:border-blue-500 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+          />
           <label className="text-[12px] text-slate-400 shrink-0">days</label>
+          {/* Quick preset chips */}
+          <div className="flex gap-1.5 ml-auto">
+            {[7, 14, 45].map((n) => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => onChange({ ...value, value: n })}
+                className={`text-[10px] px-2 py-1 rounded-md font-medium transition-all ${
+                  value.value === n
+                    ? 'bg-blue-500/30 text-blue-300 border border-blue-500/40'
+                    : 'bg-white/5 text-slate-500 hover:text-slate-300 border border-white/10'
+                }`}
+              >
+                {n === 7 ? 'Wkly' : n === 14 ? 'Fort' : '45d'}
+              </button>
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -260,7 +330,16 @@ export function CardModals() {
                 <div key={c.id} className={`flex items-center gap-2.5 p-3 rounded-xl border transition-opacity ${c.disabled ? "border-white/5 bg-[#141b2b] opacity-60" : "border-white/10 bg-[#1a2234]"}`}>
                   <div className="flex-1 min-w-0">
                     <span className="text-[14px] font-medium text-white truncate">{c.name}</span>
-                    <div className="text-[11px] text-slate-400 mt-0.5">Bill {getOrdinal(c.billDay)} · Due after {c.dueAfterDays} days</div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">
+                      Bill {getOrdinal(c.billDay)} · Due after {c.dueAfterDays} days
+                      {c.billingFrequency && c.billingFrequency.type !== 'monthly' && (
+                        <span className="ml-1 text-blue-400/70">
+                          · {c.billingFrequency.type === 'every_x_months'
+                              ? `every ${c.billingFrequency.value}mo`
+                              : `every ${c.billingFrequency.value}d`}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <button onClick={() => { setEditingCardId(c.id); setManageCardsOpen(false); setCardFormOpen(true); }} className="flex items-center gap-1.5 bg-[#111827] border border-white/10 rounded-[10px] px-3 py-2 text-[12px] font-medium text-white hover:bg-white/5 shrink-0">
                     <Pencil className="size-3.5" /> Edit
@@ -316,7 +395,9 @@ export function CardModals() {
             </div>
 
             <div className="flex flex-col gap-2 mb-3">
-              <label className="text-[13px] font-medium text-slate-400 flex items-center gap-1.5"><RefreshCw className="size-3.5 text-slate-500" /> Billing frequency</label>
+              <label className="text-[13px] font-medium text-slate-400 flex items-center gap-1.5">
+                <RefreshCw className="size-3.5 text-slate-500" /> Billing frequency
+              </label>
               <BillingFrequencySelector value={billingFrequency} onChange={setBillingFrequency} />
             </div>
 

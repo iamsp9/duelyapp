@@ -1,8 +1,10 @@
+// src/components/shared/app-modals.tsx
 "use client";
 
 import { useState } from "react";
 import { useUIStore } from "@/stores/ui-store";
 import { useVaultStore } from "@/stores/vault-store";
+import { useCurrencyStore, CURRENCIES } from "@/stores/currency-store";
 import { Modal } from "@/components/ui/modal";
 import { 
   LogOut, 
@@ -12,19 +14,23 @@ import {
   AlertCircle, 
   KeyRound, 
   Trash2, 
-  ChevronLeft 
+  ChevronLeft,
+  Coins,
+  Check,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { createVault } from "@/lib/crypto/vault";
 import { saveVault, scheduleAccountDeletion } from "@/lib/supabase/vaults";
 
-type ProfileView = 'menu' | 'change_pin' | 'delete_account';
+type ProfileView = 'menu' | 'change_pin' | 'delete_account' | 'currency';
 
 export function AppModals() {
   const { isProfileOpen, setProfileOpen, isBackupOpen, setBackupOpen } = useUIStore();
   const { vault, secret, setAuth } = useVaultStore();
   const cards = vault.cards;
   const { user, signOut } = useAuth();
+
+  const { currencyCode, setCurrency } = useCurrencyStore();
   
   // Custom Toast State
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
@@ -58,7 +64,6 @@ export function AppModals() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      
       showToast("JSON Backup generated successfully.", "success");
       setTimeout(() => setBackupOpen(false), 1500);
     } catch (e) {
@@ -98,10 +103,7 @@ export function AppModals() {
     try {
       const newEncryptedVault = await createVault(newPin, "pin", vault);
       await saveVault(newEncryptedVault);
-      
-      // FIXED: Assert metadata!
       setAuth(newPin, newEncryptedVault.metadata!.salt, "pin"); 
-      
       showToast("Master PIN changed successfully!", "success");
       setProfileView('menu');
       resetProfileState();
@@ -118,7 +120,6 @@ export function AppModals() {
       showToast("Incorrect Master PIN.", "error");
       return;
     }
-
     setIsProcessing(true);
     try {
       await scheduleAccountDeletion();
@@ -141,6 +142,16 @@ export function AppModals() {
   const userDisplayName = user?.user_metadata?.full_name || "Duely User";
   const userInitials = userDisplayName.substring(0, 2).toUpperCase();
 
+  // Title for the modal header
+  const profileTitle = () => {
+    switch (profileView) {
+      case 'change_pin':   return "🔑 Change Master PIN";
+      case 'delete_account': return "🗑️ Delete Account";
+      case 'currency':     return "💱 Display Currency";
+      default:             return "👤 Account";
+    }
+  };
+
   return (
     <>
       {/* Toast Notification */}
@@ -156,20 +167,24 @@ export function AppModals() {
       )}
 
       {/* Profile Modal */}
-      <Modal 
-        open={isProfileOpen} 
-        onClose={handleCloseProfile} 
+      <Modal
+        open={isProfileOpen}
+        onClose={handleCloseProfile}
         title={
           <div className="flex items-center gap-2">
             {profileView !== 'menu' && (
-              <button onClick={() => { setProfileView('menu'); resetProfileState(); }} className="p-1 -ml-2 rounded-md hover:bg-white/10 text-slate-400 hover:text-white transition-colors">
+              <button
+                onClick={() => { setProfileView('menu'); resetProfileState(); }}
+                className="p-1 -ml-2 rounded-md hover:bg-white/10 text-slate-400 hover:text-white transition-colors"
+              >
                 <ChevronLeft className="size-5" />
               </button>
             )}
-            {profileView === 'menu' ? "👤 Account" : profileView === 'change_pin' ? "🔑 Change Master PIN" : "🗑️ Delete Account"}
+            {profileTitle()}
           </div>
         }
       >
+        {/* ── MENU VIEW ── */}
         {profileView === 'menu' && (
           <div className="space-y-4">
             {/* User Profile Card */}
@@ -186,7 +201,21 @@ export function AppModals() {
             )}
 
             <div className="space-y-2">
-              <button 
+              {/* Currency Selector */}
+              <button
+                onClick={() => setProfileView('currency')}
+                className="flex items-center justify-between w-full p-3 rounded-xl border border-white/10 bg-transparent text-sm font-medium text-slate-300 transition-all hover:bg-white/5 active:bg-white/10 min-h-[44px]"
+              >
+                <div className="flex items-center gap-2">
+                  <Coins className="size-4 text-amber-400" />
+                  <span>Display Currency</span>
+                </div>
+                <span className="text-[12px] text-slate-500 bg-white/5 border border-white/10 rounded-md px-2 py-0.5 font-mono">
+                  {currencyCode}
+                </span>
+              </button>
+
+              <button
                 onClick={() => setProfileView('change_pin')}
                 className="flex items-center justify-between w-full p-3 rounded-xl border border-white/10 bg-transparent text-sm font-medium text-slate-300 transition-all hover:bg-white/5 active:bg-white/10 min-h-[44px]"
               >
@@ -195,7 +224,7 @@ export function AppModals() {
                 </div>
               </button>
 
-              <button 
+              <button
                 onClick={() => setProfileView('delete_account')}
                 className="flex items-center justify-between w-full p-3 rounded-xl border border-red-500/20 bg-red-500/10 text-sm font-medium text-red-400 transition-all hover:bg-red-500/20 active:bg-red-500/30 min-h-[44px]"
               >
@@ -206,7 +235,7 @@ export function AppModals() {
 
               <div className="h-px bg-white/10 my-2" />
 
-              <button 
+              <button
                 onClick={handleSignOut}
                 className="flex items-center justify-center gap-2 w-full p-3 rounded-xl border border-white/10 bg-transparent text-sm font-medium text-slate-300 transition-all hover:bg-white/5 active:bg-white/10 min-h-[44px]"
               >
@@ -216,13 +245,56 @@ export function AppModals() {
           </div>
         )}
 
+        {/* ── CURRENCY VIEW ── */}
+        {profileView === 'currency' && (
+          <div className="space-y-3">
+            <p className="text-[12px] text-slate-500 leading-relaxed">
+              Choose how amounts are displayed throughout the app. This is a local display preference only — your vault data is not changed.
+            </p>
+
+            <div className="space-y-1.5">
+              {CURRENCIES.map((c) => {
+                const isSelected = currencyCode === c.code;
+                return (
+                  <button
+                    key={c.code}
+                    onClick={() => {
+                      setCurrency(c.code);
+                      showToast(`Currency set to ${c.label}`, "success");
+                    }}
+                    className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border text-sm font-medium transition-all min-h-[44px] ${
+                      isSelected
+                        ? "border-blue-500/50 bg-blue-500/10 text-white"
+                        : "border-white/10 bg-[#111827] text-slate-300 hover:bg-white/5"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      {/* Symbol pill */}
+                      <span className={`text-[13px] font-bold w-8 text-center ${isSelected ? "text-blue-300" : "text-slate-400"}`}>
+                        {c.symbol}
+                      </span>
+                      <span className="text-[13px]">{c.label}</span>
+                    </div>
+                    {isSelected && <Check className="size-4 text-blue-400 shrink-0" />}
+                  </button>
+                );
+              })}
+            </div>
+
+            <p className="text-[11px] text-slate-600 pt-1 leading-relaxed">
+              Note: Currency conversion is not performed. Only the symbol and number formatting changes.
+            </p>
+          </div>
+        )}
+
+        {/* ── CHANGE PIN VIEW ── */}
         {profileView === 'change_pin' && (
           <form onSubmit={handleChangePin} className="space-y-4">
             <div className="space-y-3">
               <div>
                 <label className="text-[12px] font-semibold text-slate-400 uppercase tracking-wider ml-1 mb-1 block">Current PIN</label>
-                <input 
-                  type="password" 
+                <input
+                  type="password"
                   maxLength={6}
                   inputMode="numeric"
                   value={currentPin}
@@ -234,8 +306,8 @@ export function AppModals() {
               </div>
               <div>
                 <label className="text-[12px] font-semibold text-slate-400 uppercase tracking-wider ml-1 mb-1 block">New PIN</label>
-                <input 
-                  type="password" 
+                <input
+                  type="password"
                   maxLength={6}
                   inputMode="numeric"
                   value={newPin}
@@ -247,8 +319,8 @@ export function AppModals() {
               </div>
               <div>
                 <label className="text-[12px] font-semibold text-slate-400 uppercase tracking-wider ml-1 mb-1 block">Confirm New PIN</label>
-                <input 
-                  type="password" 
+                <input
+                  type="password"
                   maxLength={6}
                   inputMode="numeric"
                   value={confirmNewPin}
@@ -259,8 +331,7 @@ export function AppModals() {
                 />
               </div>
             </div>
-            
-            <button 
+            <button
               type="submit"
               disabled={isProcessing}
               className="w-full p-3 rounded-xl bg-blue-500 text-white text-sm font-medium transition-all hover:bg-blue-600 active:scale-[0.98] disabled:opacity-50 min-h-[44px] mt-2"
@@ -270,18 +341,18 @@ export function AppModals() {
           </form>
         )}
 
+        {/* ── DELETE ACCOUNT VIEW ── */}
         {profileView === 'delete_account' && (
           <form onSubmit={handleDeleteAccount} className="space-y-4">
             <div className="rounded-lg border border-orange-500/30 bg-orange-500/10 p-4 text-sm text-orange-400 leading-relaxed">
               <AlertCircle className="size-5 mb-2 inline-block mr-1" />
-              <strong>Warning:</strong> Your account will be scheduled for deletion in <strong>7 days</strong>. 
+              <strong>Warning:</strong> Your account will be scheduled for deletion in <strong>7 days</strong>.
               If you log back in during this period, your account will become active again and the deletion will be canceled.
             </div>
-
             <div>
               <label className="text-[12px] font-semibold text-slate-400 uppercase tracking-wider ml-1 mb-1 block">Enter Master PIN to Confirm</label>
-              <input 
-                type="password" 
+              <input
+                type="password"
                 maxLength={6}
                 inputMode="numeric"
                 value={deletePin}
@@ -291,8 +362,7 @@ export function AppModals() {
                 required
               />
             </div>
-            
-            <button 
+            <button
               type="submit"
               disabled={isProcessing}
               className="w-full p-3 rounded-xl bg-red-500/20 border border-red-500/30 text-red-400 text-sm font-medium transition-all hover:bg-red-500/30 active:scale-[0.98] disabled:opacity-50 min-h-[44px] mt-2"
@@ -304,7 +374,10 @@ export function AppModals() {
 
         {/* Universal Close Button */}
         <div className="mt-4 pt-4 border-t border-white/10">
-          <button onClick={handleCloseProfile} className="w-full p-3 rounded-xl border border-white/10 bg-transparent text-sm font-medium text-white transition-all active:bg-white/5 min-h-[44px]">
+          <button
+            onClick={handleCloseProfile}
+            className="w-full p-3 rounded-xl border border-white/10 bg-transparent text-sm font-medium text-white transition-all active:bg-white/5 min-h-[44px]"
+          >
             Close
           </button>
         </div>
@@ -319,7 +392,7 @@ export function AppModals() {
         <div className="space-y-4">
           <div>
             <div className="text-[12px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Export Data</div>
-            <button 
+            <button
               onClick={handleDownloadBackup}
               className="flex items-center justify-center gap-2 w-full p-3 rounded-xl border border-white/10 bg-[#111827] text-sm font-medium text-white transition-all active:bg-white/5 min-h-[44px]"
             >
@@ -343,7 +416,10 @@ export function AppModals() {
         </div>
 
         <div className="mt-4 pt-4 border-t border-white/10">
-          <button onClick={() => setBackupOpen(false)} className="w-full p-3 rounded-xl border border-white/10 bg-transparent text-sm font-medium text-white transition-all active:bg-white/5 min-h-[44px]">
+          <button
+            onClick={() => setBackupOpen(false)}
+            className="w-full p-3 rounded-xl border border-white/10 bg-transparent text-sm font-medium text-white transition-all active:bg-white/5 min-h-[44px]"
+          >
             Close
           </button>
         </div>
