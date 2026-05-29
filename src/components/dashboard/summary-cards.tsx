@@ -4,16 +4,23 @@
 import { useMemo } from "react";
 import { useVaultStore } from "@/stores/vault-store";
 import { getSummary, computeBillStatus, getDTD, getPaidTotal } from "@/lib/engine/cards";
-
-function formatINR(value: number) {
-  if (value >= 100000) return `₹${(value / 100000).toFixed(1)}L`;
-  if (value >= 1000)   return `₹${(value / 1000).toFixed(1)}k`;
-  return `₹${Math.round(value)}`;
-}
+import { useFormatCurrency } from "@/hooks/use-format-currency";
+import { useCurrencyStore } from "@/stores/currency-store";
 
 export function SummaryCards() {
   const cards = useVaultStore((s) => s.vault.cards);
   const summary = getSummary(cards);
+  const fmt = useFormatCurrency();
+  const { getCurrency } = useCurrencyStore();
+  const currency = getCurrency();
+
+  // Compact formatter that respects the current currency symbol
+  function fmtCompact(value: number) {
+    const sym = currency.symbol;
+    if (value >= 100000) return `${sym}${(value / 100000).toFixed(1)}L`;
+    if (value >= 1000)   return `${sym}${(value / 1000).toFixed(1)}k`;
+    return `${sym}${Math.round(value)}`;
+  }
 
   // Count bills needing action (overdue or due ≤ 3 days)
   const urgent = useMemo(() => {
@@ -24,13 +31,9 @@ export function SummaryCards() {
       .length;
   }, [cards]);
 
-  // Total outstanding (unpaid amount across bills with entered amounts)
   const outstanding = summary.outstanding;
-
-  // Progress %
   const pct = summary.billed > 0 ? Math.round((summary.paid / summary.billed) * 100) : 0;
 
-  // How much is genuinely due (not just total billed — only bills that have entered amounts)
   const totalDue = useMemo(() => {
     return (cards || [])
       .filter((c) => !c.disabled)
@@ -46,11 +49,11 @@ export function SummaryCards() {
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-600 mb-1">Outstanding</p>
           <p className={`text-3xl font-bold leading-none ${outstanding > 0 ? "text-red-400" : "text-emerald-400"}`}>
-            {formatINR(outstanding)}
+            {fmtCompact(outstanding)}
           </p>
           {outstanding > 0 && (
             <p className="text-[11px] text-slate-500 mt-1.5">
-              of {formatINR(summary.billed)} total billed
+              of {fmtCompact(summary.billed)} total billed
             </p>
           )}
           {outstanding === 0 && summary.billed > 0 && (
@@ -60,7 +63,7 @@ export function SummaryCards() {
 
         <div className="text-right">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-600 mb-1">Paid</p>
-          <p className="text-3xl font-bold leading-none text-emerald-400">{formatINR(summary.paid)}</p>
+          <p className="text-3xl font-bold leading-none text-emerald-400">{fmtCompact(summary.paid)}</p>
           <p className="text-[11px] text-slate-500 mt-1.5">{pct}% cleared</p>
         </div>
       </div>
@@ -97,7 +100,7 @@ export function SummaryCards() {
         </span>
         {totalDue > 0 && (
           <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded-full bg-white/5 border border-white/10 text-slate-400">
-            {formatINR(totalDue)} remaining
+            {fmtCompact(totalDue)} remaining
           </span>
         )}
       </div>

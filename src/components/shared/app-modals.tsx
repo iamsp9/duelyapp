@@ -6,14 +6,14 @@ import { useUIStore } from "@/stores/ui-store";
 import { useVaultStore } from "@/stores/vault-store";
 import { useCurrencyStore, CURRENCIES } from "@/stores/currency-store";
 import { Modal } from "@/components/ui/modal";
-import { 
-  LogOut, 
-  Download, 
-  UploadCloud, 
-  CheckCircle2, 
-  AlertCircle, 
-  KeyRound, 
-  Trash2, 
+import {
+  LogOut,
+  Download,
+  UploadCloud,
+  CheckCircle2,
+  AlertCircle,
+  KeyRound,
+  Trash2,
   ChevronLeft,
   Coins,
   Check,
@@ -26,18 +26,18 @@ type ProfileView = 'menu' | 'change_pin' | 'delete_account' | 'currency';
 
 export function AppModals() {
   const { isProfileOpen, setProfileOpen, isBackupOpen, setBackupOpen } = useUIStore();
-  const { vault, secret, setAuth } = useVaultStore();
+  const { vault, secret, setAuth, setVaultCurrency } = useVaultStore();
   const cards = vault.cards;
   const { user, signOut } = useAuth();
 
   const { currencyCode, setCurrency } = useCurrencyStore();
-  
+
   // Custom Toast State
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
-  
+
   // Profile Modal State
   const [profileView, setProfileView] = useState<ProfileView>('menu');
-  
+
   // Change PIN State
   const [currentPin, setCurrentPin] = useState("");
   const [newPin, setNewPin] = useState("");
@@ -84,6 +84,21 @@ export function AppModals() {
     setIsProcessing(false);
   };
 
+  /**
+   * Currency change handler.
+   *
+   * Two things happen:
+   * 1. `setCurrency` updates the runtime currency store (instant UI update everywhere).
+   * 2. `setVaultCurrency` writes the new code into vault.currencyCode, which causes
+   *    use-vault-sync to re-encrypt and push the vault to the server automatically.
+   */
+  const handleCurrencyChange = (code: string) => {
+    setCurrency(code);
+    setVaultCurrency(code);
+    const found = CURRENCIES.find(c => c.code === code);
+    showToast(`Currency set to ${found?.label ?? code}`, "success");
+  };
+
   const handleChangePin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (currentPin !== secret) {
@@ -103,7 +118,7 @@ export function AppModals() {
     try {
       const newEncryptedVault = await createVault(newPin, "pin", vault);
       await saveVault(newEncryptedVault);
-      setAuth(newPin, newEncryptedVault.metadata!.salt, "pin"); 
+      setAuth(newPin, newEncryptedVault.metadata!.salt, "pin");
       showToast("Master PIN changed successfully!", "success");
       setProfileView('menu');
       resetProfileState();
@@ -142,13 +157,12 @@ export function AppModals() {
   const userDisplayName = user?.user_metadata?.full_name || "Duely User";
   const userInitials = userDisplayName.substring(0, 2).toUpperCase();
 
-  // Title for the modal header
   const profileTitle = () => {
     switch (profileView) {
-      case 'change_pin':   return "🔑 Change Master PIN";
+      case 'change_pin':    return "🔑 Change Master PIN";
       case 'delete_account': return "🗑️ Delete Account";
-      case 'currency':     return "💱 Display Currency";
-      default:             return "👤 Account";
+      case 'currency':      return "💱 Display Currency";
+      default:              return "👤 Account";
     }
   };
 
@@ -187,7 +201,6 @@ export function AppModals() {
         {/* ── MENU VIEW ── */}
         {profileView === 'menu' && (
           <div className="space-y-4">
-            {/* User Profile Card */}
             {user && (
               <div className="flex items-center gap-4 p-4 rounded-xl border border-white/10 bg-[#111827]">
                 <div className="flex size-12 shrink-0 items-center justify-center rounded-full bg-blue-500/20 text-blue-400 font-bold text-lg border border-blue-500/30">
@@ -210,9 +223,13 @@ export function AppModals() {
                   <Coins className="size-4 text-amber-400" />
                   <span>Display Currency</span>
                 </div>
-                <span className="text-[12px] text-slate-500 bg-white/5 border border-white/10 rounded-md px-2 py-0.5 font-mono">
-                  {currencyCode}
-                </span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[12px] text-slate-500 bg-white/5 border border-white/10 rounded-md px-2 py-0.5 font-mono">
+                    {currencyCode}
+                  </span>
+                  {/* Cloud-synced badge */}
+                  <span className="text-[10px] text-emerald-500/70 font-medium">synced</span>
+                </div>
               </button>
 
               <button
@@ -249,7 +266,7 @@ export function AppModals() {
         {profileView === 'currency' && (
           <div className="space-y-3">
             <p className="text-[12px] text-slate-500 leading-relaxed">
-              Choose how amounts are displayed throughout the app. This is a local display preference only — your vault data is not changed.
+              Choose how amounts are displayed throughout the app. Your preference is saved to your encrypted vault and will be restored automatically on every device you log in from.
             </p>
 
             <div className="space-y-1.5">
@@ -258,10 +275,7 @@ export function AppModals() {
                 return (
                   <button
                     key={c.code}
-                    onClick={() => {
-                      setCurrency(c.code);
-                      showToast(`Currency set to ${c.label}`, "success");
-                    }}
+                    onClick={() => handleCurrencyChange(c.code)}
                     className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border text-sm font-medium transition-all min-h-[44px] ${
                       isSelected
                         ? "border-blue-500/50 bg-blue-500/10 text-white"
@@ -269,7 +283,6 @@ export function AppModals() {
                     }`}
                   >
                     <div className="flex items-center gap-3">
-                      {/* Symbol pill */}
                       <span className={`text-[13px] font-bold w-8 text-center ${isSelected ? "text-blue-300" : "text-slate-400"}`}>
                         {c.symbol}
                       </span>
@@ -282,7 +295,7 @@ export function AppModals() {
             </div>
 
             <p className="text-[11px] text-slate-600 pt-1 leading-relaxed">
-              Note: Currency conversion is not performed. Only the symbol and number formatting changes.
+              Currency conversion is not performed — only the symbol and number formatting change. Your preference is saved securely in your vault.
             </p>
           </div>
         )}

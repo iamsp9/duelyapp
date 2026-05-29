@@ -2,7 +2,6 @@
 "use client";
 
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
 
 export interface CurrencyOption {
   code: string;
@@ -29,29 +28,32 @@ interface CurrencyStore {
   getCurrency: () => CurrencyOption;
 }
 
-export const useCurrencyStore = create<CurrencyStore>()(
-  persist(
-    (set, get) => ({
-      currencyCode: "INR",
-      setCurrency: (code: string) => set({ currencyCode: code }),
-      getCurrency: () =>
-        CURRENCIES.find((c) => c.code === get().currencyCode) || CURRENCIES[0],
-    }),
-    {
-      name: "duely-currency-preference",
-    }
-  )
-);
+/**
+ * Currency preference is stored in the encrypted vault (server-side) via vault-store.
+ * This store acts as a runtime cache — it is hydrated when the vault is unlocked
+ * (see vault-store.ts → setVaults) and written back whenever the user changes it
+ * (see app-modals.tsx → handleCurrencyChange).
+ *
+ * There is intentionally NO localStorage/persist here; the vault IS the source of truth.
+ */
+export const useCurrencyStore = create<CurrencyStore>((set, get) => ({
+  currencyCode: "INR",
+  setCurrency: (code: string) => set({ currencyCode: code }),
+  getCurrency: () =>
+    CURRENCIES.find((c) => c.code === get().currencyCode) ?? CURRENCIES[0],
+}));
 
 /**
  * Format a number as currency using the user's preferred currency.
- * Call this from components via useCurrencyStore().getCurrency()
  */
-export function formatWithCurrency(amount: number | string, currency: CurrencyOption): string {
+export function formatWithCurrency(
+  amount: number | string,
+  currency: CurrencyOption
+): string {
   const num = Number(amount) || 0;
   return new Intl.NumberFormat(currency.locale, {
     style: "currency",
     currency: currency.code,
-    maximumFractionDigits: currency.code === "JPY" ? 0 : 0,
+    maximumFractionDigits: 0,
   }).format(num);
 }

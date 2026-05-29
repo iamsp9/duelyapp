@@ -3,7 +3,8 @@
 
 import { useState, useMemo } from "react";
 import { useVaultStore } from "@/stores/vault-store";
-import { computeBillStatus, formatCurrency, getPaidTotal } from "@/lib/engine/cards";
+import { computeBillStatus, getPaidTotal } from "@/lib/engine/cards";
+import { useCurrencyStore, formatWithCurrency } from "@/stores/currency-store";
 import type { BillCycle, CreditCard } from "@/types/card";
 import {
   TrendingUp,
@@ -24,9 +25,9 @@ import * as XLSX from "xlsx";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface MonthlyData {
-  key: string;          // "2026-05"
-  label: string;        // "May 2026"
-  shortLabel: string;   // "May"
+  key: string;
+  label: string;
+  shortLabel: string;
   billed: number;
   paid: number;
   outstanding: number;
@@ -41,7 +42,7 @@ interface CardSummary {
   allBills: BillCycle[];
   lastActivity: string | null;
   avgBill: number;
-  onTimeRate: number;  // % paid before or on due date
+  onTimeRate: number;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -50,7 +51,7 @@ const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct
 const MONTHS_FULL  = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
 function getMonthKey(dateStr: string): string {
-  return dateStr.slice(0, 7); // "YYYY-MM"
+  return dateStr.slice(0, 7);
 }
 
 function getMonthLabel(key: string, short = false): string {
@@ -61,12 +62,6 @@ function getMonthLabel(key: string, short = false): string {
 
 function clamp(val: number, min: number, max: number) {
   return Math.max(min, Math.min(max, val));
-}
-
-function formatINR(amount: number): string {
-  if (amount >= 100000) return `₹${(amount / 100000).toFixed(1)}L`;
-  if (amount >= 1000)   return `₹${(amount / 1000).toFixed(1)}k`;
-  return `₹${amount.toFixed(0)}`;
 }
 
 function getDaysOverdue(bill: BillCycle): number {
@@ -118,7 +113,6 @@ function StatCard({
   );
 }
 
-// Mini bar chart (SVG-based, matching dark theme)
 function SpendingBarChart({ data, height = 80 }: { data: MonthlyData[]; height?: number }) {
   if (data.length === 0) return null;
   const maxVal = Math.max(...data.map(d => d.billed), 1);
@@ -137,29 +131,11 @@ function SpendingBarChart({ data, height = 80 }: { data: MonthlyData[]; height?:
           const paidH   = Math.max(0, (d.paid   / maxVal) * height);
           return (
             <g key={d.key}>
-              {/* billed bar (background) */}
-              <rect
-                x={x} y={height - billedH}
-                width={barW} height={billedH}
-                rx={3}
-                fill="rgba(59,130,246,0.15)"
-              />
-              {/* paid bar (foreground) */}
+              <rect x={x} y={height - billedH} width={barW} height={billedH} rx={3} fill="rgba(59,130,246,0.15)" />
               {paidH > 0 && (
-                <rect
-                  x={x} y={height - paidH}
-                  width={barW} height={paidH}
-                  rx={3}
-                  fill="rgba(16,185,129,0.6)"
-                />
+                <rect x={x} y={height - paidH} width={barW} height={paidH} rx={3} fill="rgba(16,185,129,0.6)" />
               )}
-              {/* month label */}
-              <text
-                x={x + barW / 2} y={height + 16}
-                textAnchor="middle"
-                fontSize="10"
-                fill="rgba(148,163,184,0.8)"
-              >
+              <text x={x + barW / 2} y={height + 16} textAnchor="middle" fontSize="10" fill="rgba(148,163,184,0.8)">
                 {d.shortLabel}
               </text>
             </g>
@@ -170,7 +146,6 @@ function SpendingBarChart({ data, height = 80 }: { data: MonthlyData[]; height?:
   );
 }
 
-// Donut chart for card split
 function DonutChart({ slices }: { slices: { label: string; value: number; color: string }[] }) {
   const total = slices.reduce((s, x) => s + x.value, 0);
   if (total === 0) return <div className="text-[12px] text-slate-500 text-center py-4">No data</div>;
@@ -187,13 +162,8 @@ function DonutChart({ slices }: { slices: { label: string; value: number; color:
         const gap  = circumference - dash;
         const el = (
           <circle
-            key={i}
-            cx={cx} cy={cy} r={r}
-            fill="none"
-            stroke={s.color}
-            strokeWidth="14"
-            strokeDasharray={`${dash} ${gap}`}
-            strokeDashoffset={-offset}
+            key={i} cx={cx} cy={cy} r={r} fill="none" stroke={s.color} strokeWidth="14"
+            strokeDasharray={`${dash} ${gap}`} strokeDashoffset={-offset}
             style={{ transform: "rotate(-90deg)", transformOrigin: "52px 52px" }}
           />
         );
@@ -210,11 +180,8 @@ function DonutChart({ slices }: { slices: { label: string; value: number; color:
   );
 }
 
-// Payment heatmap grid (last 12 months × days)
 function MonthlyHeatmap({ allBills }: { allBills: BillCycle[] }) {
-  // Build a map of date → total payments
   const payMap: Record<string, number> = {};
-
   allBills.forEach(bill => {
     (bill.history || []).forEach(h => {
       const dateKey = (h.date || h.ts || "").slice(0, 10);
@@ -222,7 +189,6 @@ function MonthlyHeatmap({ allBills }: { allBills: BillCycle[] }) {
     });
   });
 
-  // Last 16 weeks
   const today = new Date();
   const weeks: string[][] = [];
   const startDate = new Date(today);
@@ -239,7 +205,6 @@ function MonthlyHeatmap({ allBills }: { allBills: BillCycle[] }) {
   }
 
   const maxPay = Math.max(...Object.values(payMap), 1);
-
   const cellSize = 13;
   const gap = 2;
   const dayLabels = ["M", "W", "F", "S"];
@@ -251,13 +216,11 @@ function MonthlyHeatmap({ allBills }: { allBills: BillCycle[] }) {
         viewBox={`0 0 ${16 * (cellSize + gap) + 14} ${7 * (cellSize + gap) + 4}`}
         style={{ minWidth: `${16 * (cellSize + gap) + 14}px` }}
       >
-        {/* Day labels */}
         {[1, 3, 5, 6].map((d, i) => (
           <text key={d} x="10" y={(d + 0.7) * (cellSize + gap)} fontSize="8" fill="rgba(148,163,184,0.5)" textAnchor="middle">
             {dayLabels[i]}
           </text>
         ))}
-
         {weeks.map((week, wi) => (
           week.map((dateStr, di) => {
             const x = 14 + wi * (cellSize + gap);
@@ -265,23 +228,16 @@ function MonthlyHeatmap({ allBills }: { allBills: BillCycle[] }) {
             const val = payMap[dateStr] || 0;
             const intensity = val > 0 ? clamp(val / maxPay, 0.15, 1) : 0;
             const isToday = dateStr === today.toISOString().slice(0, 10);
-
             let fill = "rgba(255,255,255,0.04)";
             if (val > 0) {
               const g = Math.round(intensity * 185);
               fill = `rgba(16, ${g}, 129, ${0.3 + intensity * 0.5})`;
             }
             if (isToday) fill = "rgba(59,130,246,0.4)";
-
             return (
               <rect
-                key={dateStr}
-                x={x} y={y}
-                width={cellSize} height={cellSize}
-                rx={2}
-                fill={fill}
-                stroke={isToday ? "rgba(59,130,246,0.8)" : "none"}
-                strokeWidth="1"
+                key={dateStr} x={x} y={y} width={cellSize} height={cellSize} rx={2}
+                fill={fill} stroke={isToday ? "rgba(59,130,246,0.8)" : "none"} strokeWidth="1"
               />
             );
           })
@@ -294,14 +250,29 @@ function MonthlyHeatmap({ allBills }: { allBills: BillCycle[] }) {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function ReportsView() {
-  const cards       = useVaultStore(s => s.vault.cards);
+  const cards        = useVaultStore(s => s.vault.cards);
   const archiveVault = useVaultStore(s => s.archiveVault);
   const archivedBills = archiveVault?.archivedBills || [];
 
-  const [selectedCardId, setSelectedCardId] = useState<string | "all">("all");
-  const [monthOffset, setMonthOffset] = useState(0); // 0 = current, -1 = last, etc.
+  // ── Currency ──────────────────────────────────────────────────────────────
+  const { getCurrency } = useCurrencyStore();
+  const currency = getCurrency();
 
-  // ── Combine all bills (active + archived) per card ──
+  /** Full formatted amount, e.g. "₹1,234" or "$1,234" */
+  const fmt = (amount: number) => formatWithCurrency(amount, currency);
+
+  /** Compact abbreviated amount, e.g. "₹1.2k", "$4.5L" */
+  const fmtCompact = (amount: number): string => {
+    const sym = currency.symbol;
+    if (amount >= 100000) return `${sym}${(amount / 100000).toFixed(1)}L`;
+    if (amount >= 1000)   return `${sym}${(amount / 1000).toFixed(1)}k`;
+    return `${sym}${amount.toFixed(0)}`;
+  };
+
+  const [selectedCardId, setSelectedCardId] = useState<string | "all">("all");
+  const [monthOffset, setMonthOffset] = useState(0);
+
+  // ── Combine all bills ──
   const allBillsFlat = useMemo<BillCycle[]>(() => {
     const active = cards.flatMap(c => c.activeBills || []);
     return [...active, ...archivedBills];
@@ -319,51 +290,30 @@ export function ReportsView() {
       const avgBill = paidBills.length > 0
         ? paidBills.reduce((s, b) => s + Number(b.billedAmount || 0), 0) / paidBills.length
         : 0;
-
-      // On-time: paid before or on due date
       let onTimeCount = 0;
       paidBills.forEach(b => {
         const lastPay = (b.history || []).map(h => h.date || h.ts || "").filter(Boolean).sort().at(-1);
         if (lastPay && lastPay <= b.dueDate) onTimeCount++;
       });
       const onTimeRate = paidBills.length > 0 ? (onTimeCount / paidBills.length) * 100 : 100;
-
       return {
-        card,
-        totalBilled,
-        totalPaid,
+        card, totalBilled, totalPaid,
         totalOutstanding: Math.max(0, totalBilled - totalPaid),
-        allBills: cardBills,
-        lastActivity,
-        avgBill,
-        onTimeRate,
+        allBills: cardBills, lastActivity, avgBill, onTimeRate,
       };
     });
   }, [cards, allBillsFlat]);
 
-  // ── Monthly trend (last 12 months) ──
+  // ── Monthly trend ──
   const monthlyData = useMemo<MonthlyData[]>(() => {
     const today = new Date();
     const months: MonthlyData[] = [];
-
     for (let i = 11; i >= 0; i--) {
       const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      months.push({
-        key,
-        label: getMonthLabel(key),
-        shortLabel: MONTHS_SHORT[d.getMonth()],
-        billed: 0,
-        paid: 0,
-        outstanding: 0,
-        count: 0,
-      });
+      months.push({ key, label: getMonthLabel(key), shortLabel: MONTHS_SHORT[d.getMonth()], billed: 0, paid: 0, outstanding: 0, count: 0 });
     }
-
-    const billsToUse = selectedCardId === "all"
-      ? allBillsFlat
-      : allBillsFlat.filter(b => b.cardId === selectedCardId);
-
+    const billsToUse = selectedCardId === "all" ? allBillsFlat : allBillsFlat.filter(b => b.cardId === selectedCardId);
     billsToUse.forEach(bill => {
       const mk = getMonthKey(bill.statementDate);
       const slot = months.find(m => m.key === mk);
@@ -374,11 +324,9 @@ export function ReportsView() {
         slot.count++;
       }
     });
-
     return months;
   }, [allBillsFlat, selectedCardId]);
 
-  // ── Selected month stats ──
   const selectedMonth = useMemo(() => {
     const idx = monthlyData.length - 1 + monthOffset;
     return monthlyData[Math.max(0, Math.min(monthlyData.length - 1, idx))];
@@ -387,37 +335,23 @@ export function ReportsView() {
   const prevMonth = monthlyData[Math.max(0, monthlyData.length - 2 + monthOffset)];
 
   // ── Overall stats ──
-  const totalBilled = useMemo(
-    () => cardSummaries.reduce((s, c) => s + c.totalBilled, 0),
-    [cardSummaries]
-  );
-  const totalPaid = useMemo(
-    () => cardSummaries.reduce((s, c) => s + c.totalPaid, 0),
-    [cardSummaries]
-  );
-  const totalOutstanding = useMemo(
-    () => cardSummaries.reduce((s, c) => s + c.totalOutstanding, 0),
-    [cardSummaries]
-  );
+  const totalBilled      = useMemo(() => cardSummaries.reduce((s, c) => s + c.totalBilled, 0),      [cardSummaries]);
+  const totalPaid        = useMemo(() => cardSummaries.reduce((s, c) => s + c.totalPaid, 0),        [cardSummaries]);
+  const totalOutstanding = useMemo(() => cardSummaries.reduce((s, c) => s + c.totalOutstanding, 0), [cardSummaries]);
 
-  // Active unpaid bills
   const overdueCount = useMemo(
     () => cards.flatMap(c => c.activeBills || [])
-      .filter(b => computeBillStatus(b) !== "paid" && getDaysOverdue(b) > 0)
-      .length,
+      .filter(b => computeBillStatus(b) !== "paid" && getDaysOverdue(b) > 0).length,
     [cards]
   );
 
-  // This month billed vs last month
   const thisMonthBilled = monthlyData.at(-1)?.billed || 0;
   const lastMonthBilled = monthlyData.at(-2)?.billed || 0;
   const billedTrend = lastMonthBilled > 0 ? ((thisMonthBilled - lastMonthBilled) / lastMonthBilled) * 100 : 0;
 
-  // Avg monthly spend (last 6 months with data)
   const last6 = monthlyData.slice(-6).filter(m => m.billed > 0);
   const avgMonthlyBilled = last6.length > 0 ? last6.reduce((s, m) => s + m.billed, 0) / last6.length : 0;
 
-  // Donut slices
   const donutSlices = useMemo(() => {
     const COLORS = ["#3b82f6","#10b981","#f59e0b","#ef4444","#8b5cf6","#ec4899","#06b6d4","#84cc16"];
     return cardSummaries
@@ -425,26 +359,20 @@ export function ReportsView() {
       .map((c, i) => ({ label: c.card.name, value: c.totalBilled, color: COLORS[i % COLORS.length] }));
   }, [cardSummaries]);
 
-  // ── Excel Export ──
+  // ── Excel Export — uses raw numbers, not formatted strings ──
   function handleExport() {
     const wb = XLSX.utils.book_new();
+    const currencyNote = `Currency: ${currency.code} (${currency.symbol})`;
 
-    // Sheet 1: Summary
     const summaryRows: any[][] = [
       ["Duely — Financial Summary Export"],
       ["Generated:", new Date().toLocaleString("en-IN")],
+      [currencyNote],
       [],
-      ["Card Name", "Total Billed", "Total Paid", "Outstanding", "Avg Bill", "On-Time Rate"],
+      ["Card Name", `Total Billed (${currency.code})`, `Total Paid (${currency.code})`, `Outstanding (${currency.code})`, "Avg Bill", "On-Time Rate"],
     ];
     cardSummaries.forEach(c => {
-      summaryRows.push([
-        c.card.name,
-        c.totalBilled,
-        c.totalPaid,
-        c.totalOutstanding,
-        c.avgBill.toFixed(0),
-        `${c.onTimeRate.toFixed(0)}%`,
-      ]);
+      summaryRows.push([c.card.name, c.totalBilled, c.totalPaid, c.totalOutstanding, c.avgBill.toFixed(0), `${c.onTimeRate.toFixed(0)}%`]);
     });
     summaryRows.push([]);
     summaryRows.push(["Grand Total", totalBilled, totalPaid, totalOutstanding, "", ""]);
@@ -452,25 +380,17 @@ export function ReportsView() {
     wsSummary["!cols"] = [{ wch: 22 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 14 }];
     XLSX.utils.book_append_sheet(wb, wsSummary, "Summary");
 
-    // Sheet 2: Monthly Trend
-    const trendRows: any[][] = [["Month", "Billed", "Paid", "Outstanding", "Bill Count"]];
+    const trendRows: any[][] = [["Month", `Billed (${currency.code})`, `Paid (${currency.code})`, `Outstanding (${currency.code})`, "Bill Count"]];
     monthlyData.forEach(m => trendRows.push([m.label, m.billed, m.paid, m.outstanding, m.count]));
     const wsTrend = XLSX.utils.aoa_to_sheet(trendRows);
     wsTrend["!cols"] = [{ wch: 16 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 12 }];
     XLSX.utils.book_append_sheet(wb, wsTrend, "Monthly Trend");
 
-    // Sheet 3: All Transactions
-    const txRows: any[][] = [["Date", "Card", "Bill Statement Date", "Amount Paid", "Note"]];
+    const txRows: any[][] = [["Date", "Card", "Bill Statement Date", `Amount Paid (${currency.code})`, "Note"]];
     allBillsFlat.forEach(bill => {
       const card = cards.find(c => c.id === bill.cardId);
       (bill.history || []).forEach(h => {
-        txRows.push([
-          h.date || h.ts?.slice(0, 10) || "",
-          card?.name || bill.cardId,
-          bill.statementDate,
-          Number(h.amount || 0),
-          h.note || "",
-        ]);
+        txRows.push([h.date || h.ts?.slice(0, 10) || "", card?.name || bill.cardId, bill.statementDate, Number(h.amount || 0), h.note || ""]);
       });
     });
     txRows.sort((a, b) => String(b[0]).localeCompare(String(a[0])));
@@ -481,19 +401,13 @@ export function ReportsView() {
     XLSX.writeFile(wb, `Duely_Report_${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
-  // ── Latest transactions ──
+  // ── Recent transactions ──
   const recentTransactions = useMemo(() => {
     const all: { date: string; cardName: string; amount: number; note: string; billDate: string }[] = [];
     allBillsFlat.forEach(bill => {
       const card = cards.find(c => c.id === bill.cardId);
       (bill.history || []).forEach(h => {
-        all.push({
-          date: h.date || (h.ts || "").slice(0, 10),
-          cardName: card?.name || "Unknown",
-          amount: Number(h.amount || 0),
-          note: h.note || "",
-          billDate: bill.statementDate,
-        });
+        all.push({ date: h.date || (h.ts || "").slice(0, 10), cardName: card?.name || "Unknown", amount: Number(h.amount || 0), note: h.note || "", billDate: bill.statementDate });
       });
     });
     return all.sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
@@ -502,40 +416,29 @@ export function ReportsView() {
   // ── Insights ──
   const insights = useMemo(() => {
     const list: { type: "warn" | "good" | "info"; text: string }[] = [];
-
     if (overdueCount > 0)
       list.push({ type: "warn", text: `${overdueCount} bill${overdueCount > 1 ? "s are" : " is"} overdue — pay now to avoid late fees` });
-
     const highOutstanding = cardSummaries.filter(c => c.totalOutstanding > 5000);
     if (highOutstanding.length > 0)
       list.push({ type: "warn", text: `High outstanding on ${highOutstanding.map(c => c.card.name).join(", ")}` });
-
     const lowOnTime = cardSummaries.filter(c => c.onTimeRate < 70 && c.allBills.length >= 2);
     if (lowOnTime.length > 0)
       list.push({ type: "warn", text: `Late payments on ${lowOnTime.map(c => c.card.name).join(", ")} — consider setting reminders` });
-
     if (billedTrend > 20)
       list.push({ type: "warn", text: `Spending up ${billedTrend.toFixed(0)}% vs last month — watch your usage` });
-
     if (billedTrend < -15 && billedTrend !== 0)
       list.push({ type: "good", text: `Spending down ${Math.abs(billedTrend).toFixed(0)}% vs last month — great progress!` });
-
     if (totalOutstanding === 0 && totalBilled > 0)
       list.push({ type: "good", text: "All bills fully paid — excellent track record!" });
-
     const allOnTime = cardSummaries.every(c => c.onTimeRate >= 90);
     if (allOnTime && cards.length > 0)
       list.push({ type: "good", text: "90%+ on-time payment rate across all cards" });
-
     if (list.length === 0)
       list.push({ type: "info", text: "Keep logging bills and payments for personalized insights" });
-
     return list.slice(0, 4);
   }, [cardSummaries, overdueCount, totalOutstanding, totalBilled, billedTrend, cards]);
 
-  const hasNoCards = cards.length === 0;
-
-  if (hasNoCards) {
+  if (cards.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center animate-in fade-in duration-300">
         <BarChart2 className="size-12 text-slate-600 mb-4" />
@@ -566,22 +469,22 @@ export function ReportsView() {
       <div className="grid grid-cols-2 gap-3">
         <StatCard
           label="Total billed"
-          value={formatCurrency(totalBilled)}
-          sub={`avg ${formatINR(avgMonthlyBilled)}/mo`}
+          value={fmt(totalBilled)}
+          sub={`avg ${fmtCompact(avgMonthlyBilled)}/mo`}
           color="blue"
           icon={CreditCardIcon}
           trend={billedTrend !== 0 ? { value: billedTrend, label: "vs last month" } : undefined}
         />
         <StatCard
           label="Total paid"
-          value={formatCurrency(totalPaid)}
+          value={fmt(totalPaid)}
           sub={totalBilled > 0 ? `${((totalPaid / totalBilled) * 100).toFixed(0)}% cleared` : undefined}
           color="green"
           icon={CheckCircle2}
         />
         <StatCard
           label="Outstanding"
-          value={formatCurrency(totalOutstanding)}
+          value={fmt(totalOutstanding)}
           sub={totalOutstanding > 0 ? `across ${cardSummaries.filter(c => c.totalOutstanding > 0).length} card(s)` : "fully cleared"}
           color={totalOutstanding > 0 ? "red" : "green"}
           icon={AlertCircle}
@@ -617,7 +520,6 @@ export function ReportsView() {
       <div className="rounded-2xl border border-white/10 bg-[#111827] p-4">
         <div className="flex items-center justify-between mb-1">
           <p className="text-[12px] font-semibold text-slate-300 uppercase tracking-wider">12-month trend</p>
-          {/* Card filter */}
           <select
             value={selectedCardId}
             onChange={e => setSelectedCardId(e.target.value)}
@@ -628,7 +530,6 @@ export function ReportsView() {
           </select>
         </div>
 
-        {/* Legend */}
         <div className="flex items-center gap-4 mb-3">
           <div className="flex items-center gap-1.5">
             <div className="size-2 rounded-sm bg-blue-500/40" />
@@ -642,7 +543,6 @@ export function ReportsView() {
 
         <SpendingBarChart data={monthlyData} height={72} />
 
-        {/* Month navigator */}
         <div className="flex items-center justify-between mt-3 pt-3 border-t border-white/5">
           <button
             onClick={() => setMonthOffset(o => Math.max(o - 1, -(monthlyData.length - 1)))}
@@ -655,7 +555,7 @@ export function ReportsView() {
           <div className="text-center">
             <p className="text-[13px] font-semibold text-white">{selectedMonth?.label || "—"}</p>
             <p className="text-[11px] text-slate-500 mt-0.5">
-              {selectedMonth ? `${formatCurrency(selectedMonth.billed)} billed · ${formatCurrency(selectedMonth.paid)} paid` : ""}
+              {selectedMonth ? `${fmt(selectedMonth.billed)} billed · ${fmt(selectedMonth.paid)} paid` : ""}
             </p>
             {selectedMonth && prevMonth && prevMonth.billed > 0 && (
               <p className={`text-[10px] mt-0.5 ${selectedMonth.billed > prevMonth.billed ? "text-red-400" : "text-emerald-400"}`}>
@@ -695,12 +595,10 @@ export function ReportsView() {
           </div>
         </div>
 
-        {/* Per-card rows */}
         <div className="space-y-2 border-t border-white/5 pt-3">
           {cardSummaries.map(cs => {
             const pct = cs.totalBilled > 0 ? (cs.totalPaid / cs.totalBilled) * 100 : 0;
             const isDisabled = cs.card.disabled;
-
             return (
               <div key={cs.card.id} className={`${isDisabled ? "opacity-50" : ""}`}>
                 <div className="flex items-center justify-between mb-1">
@@ -711,28 +609,22 @@ export function ReportsView() {
                     )}
                   </div>
                   <div className="text-right shrink-0 ml-3">
-                    <p className="text-[12px] font-semibold text-white">{formatCurrency(cs.totalBilled)}</p>
+                    <p className="text-[12px] font-semibold text-white">{fmt(cs.totalBilled)}</p>
                     <p className="text-[10px] text-slate-500">{cs.allBills.length} stmt{cs.allBills.length !== 1 ? "s" : ""}</p>
                   </div>
                 </div>
-
-                {/* Progress bar */}
                 <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
                   <div
                     className="h-full rounded-full transition-all duration-500"
-                    style={{
-                      width: `${clamp(pct, 0, 100)}%`,
-                      background: pct >= 100 ? "#10b981" : pct > 50 ? "#f59e0b" : "#ef4444",
-                    }}
+                    style={{ width: `${clamp(pct, 0, 100)}%`, background: pct >= 100 ? "#10b981" : pct > 50 ? "#f59e0b" : "#ef4444" }}
                   />
                 </div>
-
                 <div className="flex items-center justify-between mt-1">
                   <p className="text-[10px] text-slate-500">
-                    paid {formatCurrency(cs.totalPaid)}
-                    {cs.totalOutstanding > 0 && <span className="text-red-400/80"> · owe {formatCurrency(cs.totalOutstanding)}</span>}
+                    paid {fmt(cs.totalPaid)}
+                    {cs.totalOutstanding > 0 && <span className="text-red-400/80"> · owe {fmt(cs.totalOutstanding)}</span>}
                   </p>
-                  <p className="text-[10px] text-slate-500">avg {formatCurrency(cs.avgBill)}/bill</p>
+                  <p className="text-[10px] text-slate-500">avg {fmtCompact(cs.avgBill)}/bill</p>
                 </div>
               </div>
             );
@@ -768,7 +660,7 @@ export function ReportsView() {
                     {tx.note ? ` · ${tx.note}` : ""}
                   </p>
                 </div>
-                <p className="text-[13px] font-semibold text-emerald-400 shrink-0">{formatCurrency(tx.amount)}</p>
+                <p className="text-[13px] font-semibold text-emerald-400 shrink-0">{fmt(tx.amount)}</p>
               </div>
             ))}
           </div>
@@ -789,10 +681,7 @@ export function ReportsView() {
                   <div className="flex-1 h-2 rounded-full bg-white/5 overflow-hidden">
                     <div
                       className="h-full rounded-full"
-                      style={{
-                        width: `${cs.onTimeRate}%`,
-                        background: cs.onTimeRate >= 90 ? "#10b981" : cs.onTimeRate >= 70 ? "#f59e0b" : "#ef4444",
-                      }}
+                      style={{ width: `${cs.onTimeRate}%`, background: cs.onTimeRate >= 90 ? "#10b981" : cs.onTimeRate >= 70 ? "#f59e0b" : "#ef4444" }}
                     />
                   </div>
                   <p className={`text-[12px] font-semibold w-10 text-right shrink-0 ${cs.onTimeRate >= 90 ? "text-emerald-400" : cs.onTimeRate >= 70 ? "text-amber-400" : "text-red-400"}`}>

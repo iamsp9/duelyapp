@@ -23,6 +23,8 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { DatePicker } from "@/components/ui/date-picker";
+import { useFormatCurrency } from "@/hooks/use-format-currency";
+import { useCurrencyStore } from "@/stores/currency-store";
 
 interface Props { card: CreditCard; bill: BillCycle }
 
@@ -37,6 +39,9 @@ function getGlowClass(bill: BillCycle) {
 
 export function CardItem({ card, bill }: Props) {
   const { updateBill, deletePayment } = useVaultStore();
+  const fmt = useFormatCurrency();
+  const { getCurrency } = useCurrencyStore();
+  const currency = getCurrency();
 
   const [open,              setOpen]              = useState(false);
   const [toast,             setToast]             = useState<{ message: string; type: "success" | "error" } | null>(null);
@@ -48,7 +53,7 @@ export function CardItem({ card, bill }: Props) {
   const [noteVal, setNoteVal] = useState("");
   const [dateVal, setDateVal] = useState(new Date().toISOString().slice(0, 10));
 
-  const status   = computeBillStatus(bill);
+  const status    = computeBillStatus(bill);
   const glowClass = getGlowClass(bill);
 
   const dotCls =
@@ -57,9 +62,9 @@ export function CardItem({ card, bill }: Props) {
     : "bg-green-500";
 
   const billStr = bill.billedAmount !== "" && bill.billedAmount != null
-    ? formatCurrency(bill.billedAmount) : "—";
+    ? fmt(bill.billedAmount) : "—";
   const tp       = getPaidTotal(bill);
-  const paidStr  = tp > 0 ? formatCurrency(tp) : "—";
+  const paidStr  = tp > 0 ? fmt(tp) : "—";
   const badge    = getDueBadge(bill);
 
   const formatDate = (s: string) =>
@@ -82,7 +87,7 @@ export function CardItem({ card, bill }: Props) {
     if (billAmt > 0 && proj >= billAmt)
       return <span className="text-emerald-400 text-[12px] flex items-center gap-1"><Check className="size-3.5" /> Will be <b>Paid</b></span>;
     if (proj > 0)
-      return <span className="text-orange-400 text-[12px] flex items-center gap-1"><Clock className="size-3.5" /><b>Partial</b> — {formatCurrency(proj)} / {formatCurrency(billAmt)}</span>;
+      return <span className="text-orange-400 text-[12px] flex items-center gap-1"><Clock className="size-3.5" /><b>Partial</b> — {fmt(proj)} / {fmt(billAmt)}</span>;
     return <span className="text-red-400 text-[12px] flex items-center gap-1"><X className="size-3.5" /><b>Unpaid</b></span>;
   };
 
@@ -106,26 +111,22 @@ export function CardItem({ card, bill }: Props) {
     <>
       <div className={`rounded-2xl border bg-[#111827] overflow-hidden transition-all ${glowClass}`}>
 
-        {/* ── Collapsed row — optimised for one-thumb mobile tap ── */}
+        {/* ── Collapsed row ── */}
         <div
           className="flex items-center gap-3 px-4 py-3.5 cursor-pointer select-none active:bg-white/[0.03]"
           onClick={() => setOpen(!open)}
         >
-          {/* Status dot */}
           <div className={`w-2 h-2 rounded-full shrink-0 mt-0.5 ${dotCls}`} />
 
-          {/* Card name + dates — take all available space */}
           <div className="flex-1 min-w-0">
             <p className="font-semibold text-[14px] text-white leading-tight truncate">
               {card.name}
             </p>
-            {/* Compact date line — "13 May · due 2 Jun" */}
             <p className="text-[11px] text-slate-500 mt-0.5">
               {formatShort(bill.statementDate)} · due {formatShort(bill.dueDate)}
             </p>
           </div>
 
-          {/* Badge + amount stacked right — no wrapping */}
           <div className="flex flex-col items-end gap-1 shrink-0">
             <span className={`text-[11px] px-2 py-0.5 rounded-md font-semibold whitespace-nowrap ${badge.classes}`}>
               {badge.text}
@@ -154,10 +155,12 @@ export function CardItem({ card, bill }: Props) {
               <span>⏰ Due: {formatDate(bill.dueDate)}</span>
             </div>
 
-            {/* Amount inputs — full width on mobile */}
+            {/* Amount inputs */}
             <div className="grid grid-cols-2 gap-2.5">
               <div className="space-y-1.5">
-                <label className="text-[11px] font-medium text-slate-500 block">Statement (₹)</label>
+                <label className="text-[11px] font-medium text-slate-500 block">
+                  Statement ({currency.symbol})
+                </label>
                 <input
                   type="number"
                   inputMode="decimal"
@@ -168,7 +171,9 @@ export function CardItem({ card, bill }: Props) {
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-[11px] font-medium text-slate-500 block">Pay now (₹)</label>
+                <label className="text-[11px] font-medium text-slate-500 block">
+                  Pay now ({currency.symbol})
+                </label>
                 <input
                   type="number"
                   inputMode="decimal"
@@ -195,7 +200,6 @@ export function CardItem({ card, bill }: Props) {
               </div>
               <div className="space-y-1.5">
                 <label className="text-[11px] font-medium text-slate-500 block">Date</label>
-                {/* Native date on mobile is best UX, custom picker on md+ */}
                 <input
                   type="date"
                   value={dateVal}
@@ -222,7 +226,7 @@ export function CardItem({ card, bill }: Props) {
               </div>
             )}
 
-            {/* Action buttons — large touch targets */}
+            {/* Action buttons */}
             <div className="grid grid-cols-2 gap-2.5">
               <button
                 onClick={() => handleSaveStatement(false)}
@@ -253,7 +257,7 @@ export function CardItem({ card, bill }: Props) {
                             {h.date
                               ? new Date(h.date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "2-digit" })
                               : "—"}
-                            {" "}— {formatCurrency(h.amount)}
+                            {" "}— {fmt(h.amount)}
                             {h.note && <span className="text-slate-500"> · {h.note}</span>}
                           </span>
                         </div>
@@ -288,7 +292,7 @@ export function CardItem({ card, bill }: Props) {
         )}
       </div>
 
-      {/* Toast — bottom-safe on mobile */}
+      {/* Toast */}
       {toast && (
         <div className="fixed bottom-[80px] left-1/2 -translate-x-1/2 z-[200] pointer-events-none">
           <div className={`flex items-center gap-2 rounded-2xl border px-4 py-3 shadow-2xl text-[13px] font-medium backdrop-blur-md

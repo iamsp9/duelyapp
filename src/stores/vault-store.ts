@@ -5,10 +5,15 @@ import { create } from "zustand";
 import type { CreditCard, BillCycle, PaymentStatus } from "@/types/card";
 import { spawnMissingBills, extractArchivableBills, computeBillStatus } from "@/lib/engine/cards";
 
+// ── Vault data shape (what gets encrypted & stored on the server) ─────────────
+export interface MainVaultData {
+  cards: CreditCard[];
+  /** ISO-4217 currency code the user has chosen, e.g. "INR", "USD". */
+  currencyCode?: string;
+}
+
 interface VaultState {
-  vault: {
-    cards: CreditCard[];
-  };
+  vault: MainVaultData;
   archiveVault: {
     archivedBills: BillCycle[];
     deletedCards?: { id: string; name: string; deletedAt: string }[];
@@ -23,11 +28,14 @@ interface VaultState {
   setAuth: (secret: string, salt: string, mode: string) => void;
   setCryptoKey: (key: CryptoKey) => void;
   setHydrated: (hydrated: boolean) => void;
-  
+
   setVaults: (
-    mainVault: { cards: CreditCard[] }, 
+    mainVault: MainVaultData,
     archiveVault?: { archivedBills: BillCycle[]; deletedCards?: { id: string; name: string; deletedAt: string }[] }
   ) => void;
+
+  /** Updates the currency code stored inside the vault payload (triggers auto-sync). */
+  setVaultCurrency: (code: string) => void;
 
   addCard: (card: CreditCard) => void;
   updateCard: (cardId: string, updates: Partial<CreditCard>) => void;
@@ -40,13 +48,12 @@ interface VaultState {
   }) => void;
 
   deletePayment: (cardId: string, billId: string, paymentId: string) => void;
-  
-  // NEW: Removes a deleted card and ALL its associated history from the archive
+
   removeArchivedCard: (cardId: string) => void;
 }
 
 export const useVaultStore = create<VaultState>((set) => ({
-  vault: { cards: [] },
+  vault: { cards: [], currencyCode: "INR" },
   archiveVault: { archivedBills: [], deletedCards: [] },
 
   secret: null,
@@ -62,12 +69,25 @@ export const useVaultStore = create<VaultState>((set) => ({
   setVaults: (mainVault, archiveVault) =>
     set((state) => {
       const processedCards = (mainVault.cards || []).map(card => spawnMissingBills(card));
-
       return {
-        vault: { cards: processedCards },
+        vault: {
+          ...mainVault,
+          cards: processedCards,
+          currencyCode: mainVault.currencyCode ?? "INR",
+        },
         archiveVault: archiveVault || state.archiveVault,
       };
     }),
+
+  /**
+   * Writes the chosen currency code into the vault data.
+   * use-vault-sync watches `vault` changes and will automatically re-encrypt
+   * and push to the server, so no extra work is needed here.
+   */
+  setVaultCurrency: (code) =>
+    set((state) => ({
+      vault: { ...state.vault, currencyCode: code },
+    })),
 
   addCard: (card) =>
     set((state) => {
@@ -96,13 +116,11 @@ export const useVaultStore = create<VaultState>((set) => ({
       const newCards = state.vault.cards.filter((c) => c.id !== cardId);
 
       let newArchiveVault = { ...state.archiveVault };
-      
+
       if (!keepHistory) {
-        // PURGE: Remove all bills from this card and remove it from deletedCards
         newArchiveVault.archivedBills = newArchiveVault.archivedBills.filter(b => b.cardId !== cardId);
         newArchiveVault.deletedCards = (newArchiveVault.deletedCards || []).filter(c => c.id !== cardId);
       } else if (cardToDelete) {
-        // RETAIN: Add the card's profile to the deletedCards list so we can show it in the UI
         newArchiveVault.deletedCards = [
           ...(newArchiveVault.deletedCards || []),
           { id: cardToDelete.id, name: cardToDelete.name, deletedAt: new Date().toISOString() }
@@ -161,19 +179,15 @@ export const useVaultStore = create<VaultState>((set) => ({
       bill.history = history;
       bill.status = computeBillStatus(bill);
       activeBills[billIndex] = bill;
-      
-      const updatedCard = { ...card, activeBills };
 
+      const updatedCard = { ...card, activeBills };
       const { updatedCard: finalCard, billsToArchive } = extractArchivableBills(updatedCard);
 
       const newCards = [...state.vault.cards];
       newCards[cardIndex] = finalCard;
 
       return {
-        vault: {
-          ...state.vault,
-          cards: newCards,
-        },
+        vault: { ...state.vault, cards: newCards },
         archiveVault: {
           ...state.archiveVault,
           archivedBills: [...state.archiveVault.archivedBills, ...billsToArchive]
@@ -202,10 +216,7 @@ export const useVaultStore = create<VaultState>((set) => ({
       newCards[cardIndex] = { ...card, activeBills };
 
       return {
-        vault: {
-          ...state.vault,
-          cards: newCards,
-        },
+        vault: { ...state.vault, cards: newCards },
       };
     }),
 

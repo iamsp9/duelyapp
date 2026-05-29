@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { createVault, unlockVault } from "@/lib/crypto/vault";
 import { saveVault, loadVault, cancelAccountDeletion, wipeUserVault } from "@/lib/supabase/vaults";
 import { useVaultStore } from "@/stores/vault-store";
+import { useCurrencyStore } from "@/stores/currency-store";
 import { useAuth } from "@/hooks/use-auth";
 import { Lock, LogOut, ShieldAlert, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -15,20 +16,20 @@ type Step = "loading" | "unlock" | "setup" | "confirm" | "forgot_pin";
 export default function VaultPage() {
   const router = useRouter();
   const { user, signOut } = useAuth();
-  
-  // NOTE: Swapped setVault for setVaults
+
   const { setAuth, setVaults, setHydrated } = useVaultStore();
+  const { setCurrency } = useCurrencyStore();
 
   const [step, setStep] = useState<Step>("loading");
-  
+
   // Dual Vault State
   const [encryptedMainVault, setEncryptedMainVault] = useState<any>(null);
   const [encryptedArchiveVault, setEncryptedArchiveVault] = useState<any>(null);
-  
+
   const [pin, setPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
   const [acknowledged, setAcknowledged] = useState(false);
-  
+
   const [error, setError] = useState("");
   const [isShaking, setIsShaking] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -48,7 +49,7 @@ export default function VaultPage() {
       try {
         const cloudMainVault = await loadVault('main');
         const cloudArchiveVault = await loadVault('archive');
-        
+
         if (cloudMainVault && cloudMainVault.ciphertext && cloudMainVault.metadata) {
           setEncryptedMainVault(cloudMainVault);
           setEncryptedArchiveVault(cloudArchiveVault);
@@ -121,17 +122,19 @@ export default function VaultPage() {
     setError("");
 
     try {
-      const emptyMain = { cards: [] };
+      const emptyMain = { cards: [], currencyCode: "INR" };
       const emptyArchive = { archivedBills: [] };
-      
+
       const newMainVault = await createVault(secretKey, "pin", emptyMain);
       await saveVault(newMainVault, 'main');
-      
+
       const newArchiveVault = await createVault(secretKey, "pin", emptyArchive, newMainVault.metadata!.salt);
       await saveVault(newArchiveVault, 'archive');
-      
+
       setAuth(secretKey, newMainVault.metadata!.salt, "pin");
       setVaults(emptyMain, emptyArchive);
+      // Hydrate currency store (new vault defaults to INR)
+      setCurrency("INR");
       setHydrated(true);
       router.push("/dashboard");
     } catch (err) {
@@ -139,7 +142,7 @@ export default function VaultPage() {
     } finally {
       setIsProcessing(false);
     }
-  }, [router, setAuth, setHydrated, setVaults]);
+  }, [router, setAuth, setHydrated, setVaults, setCurrency]);
 
   const handleUnlock = useCallback(async (secretKey: string) => {
     if (!encryptedMainVault) return;
@@ -149,22 +152,28 @@ export default function VaultPage() {
     try {
       const decryptedMain = await unlockVault<any>(secretKey, encryptedMainVault);
       let decryptedArchive = { archivedBills: [] };
-      
+
       if (encryptedArchiveVault && encryptedArchiveVault.ciphertext) {
         decryptedArchive = await unlockVault<any>(secretKey, encryptedArchiveVault);
       }
-      
+
       if (encryptedMainVault.metadata?.delete_scheduled_at) {
         await cancelAccountDeletion();
       }
-      
+
       setFailedAttempts(0);
       setLockoutEndTime(null);
       localStorage.removeItem("duely_failed_attempts");
       localStorage.removeItem("duely_lockout_end");
-      
+
       setAuth(secretKey, encryptedMainVault.metadata!.salt, "pin");
       setVaults(decryptedMain, decryptedArchive);
+
+      // ── Hydrate currency store from the vault ──────────────────────────────
+      // Fall back to INR for vaults created before this feature was added.
+      const savedCurrency = decryptedMain.currencyCode ?? "INR";
+      setCurrency(savedCurrency);
+
       setHydrated(true);
       router.push("/dashboard");
     } catch (err) {
@@ -172,7 +181,7 @@ export default function VaultPage() {
     } finally {
       setIsProcessing(false);
     }
-  }, [encryptedMainVault, encryptedArchiveVault, router, setAuth, setHydrated, setVaults, failedAttempts]);
+  }, [encryptedMainVault, encryptedArchiveVault, router, setAuth, setHydrated, setVaults, setCurrency, failedAttempts]);
 
   const handleWipeVault = async () => {
     setIsProcessing(true);
@@ -184,7 +193,7 @@ export default function VaultPage() {
       setPin("");
       setConfirmPin("");
       setAcknowledged(false);
-      
+
       setFailedAttempts(0);
       setLockoutEndTime(null);
       localStorage.removeItem("duely_failed_attempts");
@@ -198,7 +207,7 @@ export default function VaultPage() {
 
   const handlePinInput = useCallback((val: string) => {
     if (isProcessing || (step === "setup" && !acknowledged) || lockoutEndTime) return;
-    
+
     setError("");
     const current = step === "confirm" ? confirmPin : pin;
     const setter = step === "confirm" ? setConfirmPin : setPin;
@@ -253,7 +262,7 @@ export default function VaultPage() {
       <main className="min-h-screen bg-[#020817] flex items-center justify-center p-4 backdrop-blur-sm">
         <div className="w-full max-w-md rounded-xl border border-red-500/30 bg-[#0a0f1c] p-6 shadow-2xl relative overflow-hidden">
           <div className="absolute top-0 left-0 right-0 h-1 bg-red-500/50" />
-          
+
           <div className="flex flex-col items-center text-center mb-6">
             <div className="w-14 h-14 bg-red-500/10 rounded-full flex items-center justify-center mb-4">
               <AlertTriangle className="size-7 text-red-500" />
@@ -273,14 +282,14 @@ export default function VaultPage() {
           </div>
 
           <div className="flex flex-col gap-3">
-            <button 
+            <button
               onClick={handleWipeVault}
               disabled={isProcessing}
               className="w-full py-2.5 rounded-lg bg-red-500 hover:bg-red-600 text-white font-medium text-sm transition-colors disabled:opacity-50"
             >
               {isProcessing ? "Wiping Data..." : "I Understand, Delete My Vault"}
             </button>
-            <button 
+            <button
               onClick={() => { setStep("unlock"); setPin(""); setError(""); }}
               disabled={isProcessing}
               className="w-full py-2.5 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 font-medium text-sm transition-colors disabled:opacity-50"
@@ -300,18 +309,18 @@ export default function VaultPage() {
           <div className="w-16 h-16 bg-[#1a2234] border border-white/10 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-black/50 relative">
             {step === "unlock" ? <Lock className="size-8 text-blue-400" /> : <ShieldAlert className="size-8 text-green-400" />}
             {lockoutEndTime && (
-               <div className="absolute inset-0 bg-black/60 rounded-2xl flex items-center justify-center backdrop-blur-sm">
-                 <Lock className="size-6 text-red-500" />
-               </div>
+              <div className="absolute inset-0 bg-black/60 rounded-2xl flex items-center justify-center backdrop-blur-sm">
+                <Lock className="size-6 text-red-500" />
+              </div>
             )}
           </div>
           <h1 className="text-[22px] font-bold text-white mb-2 tracking-tight">
             {step === "unlock" ? "Unlock Duely" : step === "confirm" ? "Confirm Master PIN" : "Set Master PIN"}
           </h1>
           <p className="text-[13px] text-slate-400">
-            {step === "unlock" ? "Enter your Master PIN to decrypt card data." : 
-             step === "confirm" ? "Re-enter your 6-digit Master PIN." : 
-             "Create a 6-digit Master PIN to secure your data locally."}
+            {step === "unlock" ? "Enter your Master PIN to decrypt card data." :
+              step === "confirm" ? "Re-enter your 6-digit Master PIN." :
+                "Create a 6-digit Master PIN to secure your data locally."}
           </p>
           {user?.email && (
             <div className="mt-4 py-1.5 px-3 bg-white/5 border border-white/10 rounded-full inline-flex items-center gap-2 text-[11px] text-slate-300">
@@ -322,10 +331,10 @@ export default function VaultPage() {
 
         {step === "setup" && (
           <div className="mb-6 flex items-start gap-3 text-left bg-orange-500/10 border border-orange-500/20 p-3 rounded-xl mx-2">
-            <input 
-              type="checkbox" 
-              id="ack" 
-              checked={acknowledged} 
+            <input
+              type="checkbox"
+              id="ack"
+              checked={acknowledged}
               onChange={(e) => setAcknowledged(e.target.checked)}
               className="mt-1 shrink-0 accent-orange-500 size-4 cursor-pointer"
             />
@@ -354,22 +363,22 @@ export default function VaultPage() {
         <div className="min-h-[24px]">
           {error && !lockoutEndTime && <div className="text-[13px] text-red-400 font-medium">{error}</div>}
           {lockoutEndTime && remainingTime > 0 && (
-             <div className="text-[13px] text-red-400 font-medium flex items-center justify-center gap-2 animate-pulse">
-               <Lock className="size-3" /> Try again in {Math.floor(remainingTime / 60)}:{(remainingTime % 60).toString().padStart(2, '0')}
-             </div>
+            <div className="text-[13px] text-red-400 font-medium flex items-center justify-center gap-2 animate-pulse">
+              <Lock className="size-3" /> Try again in {Math.floor(remainingTime / 60)}:{(remainingTime % 60).toString().padStart(2, '0')}
+            </div>
           )}
           {isProcessing && !error && !lockoutEndTime && <div className="text-[13px] text-blue-400 font-medium animate-pulse">Processing security handshake...</div>}
         </div>
 
         <div className="mt-8 pt-6 border-t border-white/5 flex flex-col gap-4">
           {step === "unlock" && user && (
-             <button 
-               type="button" 
-               onClick={() => setStep("forgot_pin")} 
-               className="text-[12px] text-red-400/80 hover:text-red-400 transition-colors underline underline-offset-2"
-             >
-               Forgot PIN? Reset Account
-             </button>
+            <button
+              type="button"
+              onClick={() => setStep("forgot_pin")}
+              className="text-[12px] text-red-400/80 hover:text-red-400 transition-colors underline underline-offset-2"
+            >
+              Forgot PIN? Reset Account
+            </button>
           )}
 
           <button type="button" onClick={async () => { await signOut(); router.push("/login"); }} className="flex items-center justify-center gap-1.5 w-full text-[13px] text-slate-500 hover:text-slate-300 transition-colors">
