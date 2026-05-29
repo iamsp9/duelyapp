@@ -37,13 +37,13 @@ function CardHistoryRow({ card, archivedBills }: { card: CreditCard; archivedBil
   const paginated = allBills.slice((page - 1) * limit, page * limit);
 
   const handleDownload = () => {
-    const wsData = [["Statement Date", "Due Date", "Billed Amount", "Paid Amount", "Status"]];
+    const wsData: (string | number)[][] = [["Statement Date", "Due Date", "Billed Amount", "Paid Amount", "Status"]];
 
     allBills.forEach((b) => {
       wsData.push([
         new Date(b.statementDate).toLocaleDateString("en-IN"),
         new Date(b.dueDate).toLocaleDateString("en-IN"),
-        b.billedAmount || 0,
+        Number(b.billedAmount) || 0,   // ← FIXED
         getPaidTotal(b),
         computeBillStatus(b).toUpperCase(),
       ]);
@@ -155,12 +155,12 @@ function CardHistoryRow({ card, archivedBills }: { card: CreditCard; archivedBil
 // ─── Main View Component ────────────────────────────────────────────────────
 export function AllCardsView() {
   const cards = useVaultStore((s) => s.vault.cards);
-  
+
   // FIX: Fetch the object first, apply the array fallback outside to prevent infinite loops
   const archiveVault = useVaultStore((s) => s.archiveVault);
   const archivedBills = archiveVault?.archivedBills || [];
   const deletedCards = archiveVault?.deletedCards || [];
-  
+
   const setManageCardsOpen = useUIStore((s) => s.setManageCardsOpen);
 
   const activeCards = (cards || []).filter((c) => !c.disabled);

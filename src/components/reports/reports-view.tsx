@@ -180,6 +180,12 @@ function DonutChart({ slices }: { slices: { label: string; value: number; color:
   );
 }
 
+// ─── FIX 1: Heatmap — show all 7 day labels (Tu/Th/Sa are now included) ──────
+// Previously only [1,3,5,6] were labeled (M,W,F,S) due to sparse index mapping.
+// The heatmap grid rows are: 0=Mon 1=Tue 2=Wed 3=Thu 4=Fri 5=Sat 6=Sun
+// (startDate is anchored to a Monday via `getDate() - 7*16 + 1` which can land
+// on any weekday, but the inner `d` index 0‥6 represents Mon‥Sun offsets within
+// each week column).  We show concise labels every other row to avoid crowding.
 function MonthlyHeatmap({ allBills }: { allBills: BillCycle[] }) {
   const payMap: Record<string, number> = {};
   allBills.forEach(bill => {
@@ -207,7 +213,10 @@ function MonthlyHeatmap({ allBills }: { allBills: BillCycle[] }) {
   const maxPay = Math.max(...Object.values(payMap), 1);
   const cellSize = 13;
   const gap = 2;
-  const dayLabels = ["M", "W", "F", "S"];
+
+  // FIX: Show all 7 day-row labels (Mon–Sun). Only alternate rows to avoid crowding.
+  // Row index 0=Mon 1=Tue 2=Wed 3=Thu 4=Fri 5=Sat 6=Sun
+  const dayLabels: Record<number, string> = { 0: "M", 1: "T", 2: "W", 3: "T", 4: "F", 5: "S", 6: "S" };
 
   return (
     <div className="overflow-x-auto">
@@ -216,11 +225,20 @@ function MonthlyHeatmap({ allBills }: { allBills: BillCycle[] }) {
         viewBox={`0 0 ${16 * (cellSize + gap) + 14} ${7 * (cellSize + gap) + 4}`}
         style={{ minWidth: `${16 * (cellSize + gap) + 14}px` }}
       >
-        {[1, 3, 5, 6].map((d, i) => (
-          <text key={d} x="10" y={(d + 0.7) * (cellSize + gap)} fontSize="8" fill="rgba(148,163,184,0.5)" textAnchor="middle">
-            {dayLabels[i]}
+        {/* Day labels for all 7 rows */}
+        {[0, 1, 2, 3, 4, 5, 6].map((d) => (
+          <text
+            key={d}
+            x="10"
+            y={(d + 0.75) * (cellSize + gap)}
+            fontSize="8"
+            fill="rgba(148,163,184,0.5)"
+            textAnchor="middle"
+          >
+            {dayLabels[d]}
           </text>
         ))}
+
         {weeks.map((week, wi) => (
           week.map((dateStr, di) => {
             const x = 14 + wi * (cellSize + gap);
@@ -254,14 +272,15 @@ export function ReportsView() {
   const archiveVault = useVaultStore(s => s.archiveVault);
   const archivedBills = archiveVault?.archivedBills || [];
 
+  // FIX 2: Pull deletedCards so we can resolve names for deleted-but-preserved cards
+  const deletedCards  = archiveVault?.deletedCards  || [];
+
   // ── Currency ──────────────────────────────────────────────────────────────
   const { getCurrency } = useCurrencyStore();
   const currency = getCurrency();
 
-  /** Full formatted amount, e.g. "₹1,234" or "$1,234" */
   const fmt = (amount: number) => formatWithCurrency(amount, currency);
 
-  /** Compact abbreviated amount, e.g. "₹1.2k", "$4.5L" */
   const fmtCompact = (amount: number): string => {
     const sym = currency.symbol;
     if (amount >= 100000) return `${sym}${(amount / 100000).toFixed(1)}L`;
@@ -359,12 +378,12 @@ export function ReportsView() {
       .map((c, i) => ({ label: c.card.name, value: c.totalBilled, color: COLORS[i % COLORS.length] }));
   }, [cardSummaries]);
 
-  // ── Excel Export — uses raw numbers, not formatted strings ──
+  // ── Excel Export ──
   function handleExport() {
     const wb = XLSX.utils.book_new();
     const currencyNote = `Currency: ${currency.code} (${currency.symbol})`;
 
-    const summaryRows: any[][] = [
+    const summaryRows: (string | number)[][] = [
       ["Duely — Financial Summary Export"],
       ["Generated:", new Date().toLocaleString("en-IN")],
       [currencyNote],
@@ -380,17 +399,21 @@ export function ReportsView() {
     wsSummary["!cols"] = [{ wch: 22 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 14 }];
     XLSX.utils.book_append_sheet(wb, wsSummary, "Summary");
 
-    const trendRows: any[][] = [["Month", `Billed (${currency.code})`, `Paid (${currency.code})`, `Outstanding (${currency.code})`, "Bill Count"]];
+    const trendRows: (string | number)[][] = [["Month", `Billed (${currency.code})`, `Paid (${currency.code})`, `Outstanding (${currency.code})`, "Bill Count"]];
     monthlyData.forEach(m => trendRows.push([m.label, m.billed, m.paid, m.outstanding, m.count]));
     const wsTrend = XLSX.utils.aoa_to_sheet(trendRows);
     wsTrend["!cols"] = [{ wch: 16 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 12 }];
     XLSX.utils.book_append_sheet(wb, wsTrend, "Monthly Trend");
 
-    const txRows: any[][] = [["Date", "Card", "Bill Statement Date", `Amount Paid (${currency.code})`, "Note"]];
+    const txRows: (string | number)[][] = [["Date", "Card", "Bill Statement Date", `Amount Paid (${currency.code})`, "Note"]];
     allBillsFlat.forEach(bill => {
       const card = cards.find(c => c.id === bill.cardId);
+      // FIX 2 (export): also check deletedCards for the card name
+      const cardName = card?.name
+        ?? deletedCards.find(dc => dc.id === bill.cardId)?.name
+        ?? bill.cardId;
       (bill.history || []).forEach(h => {
-        txRows.push([h.date || h.ts?.slice(0, 10) || "", card?.name || bill.cardId, bill.statementDate, Number(h.amount || 0), h.note || ""]);
+        txRows.push([h.date || h.ts?.slice(0, 10) || "", cardName, bill.statementDate, Number(h.amount || 0), h.note || ""]);
       });
     });
     txRows.sort((a, b) => String(b[0]).localeCompare(String(a[0])));
@@ -402,18 +425,38 @@ export function ReportsView() {
   }
 
   // ── Recent transactions ──
+  // FIX 2: Resolve card name from active cards first, then deleted cards (preserved
+  // history). If card was deleted with "Delete All" (no history kept), bills for
+  // that cardId won't exist in archivedBills so they'll never surface here.
   const recentTransactions = useMemo(() => {
     const all: { date: string; cardName: string; amount: number; note: string; billDate: string }[] = [];
     allBillsFlat.forEach(bill => {
-      const card = cards.find(c => c.id === bill.cardId);
+      // 1. Try active cards
+      const activeCard = cards.find(c => c.id === bill.cardId);
+      // 2. Try preserved deleted cards
+      const deletedCard = !activeCard
+        ? deletedCards.find(dc => dc.id === bill.cardId)
+        : undefined;
+
+      const cardName = activeCard?.name ?? deletedCard?.name ?? null;
+
+      // If no name can be resolved at all, skip — card was fully purged
+      if (!cardName) return;
+
       (bill.history || []).forEach(h => {
-        all.push({ date: h.date || (h.ts || "").slice(0, 10), cardName: card?.name || "Unknown", amount: Number(h.amount || 0), note: h.note || "", billDate: bill.statementDate });
+        all.push({
+          date: h.date || (h.ts || "").slice(0, 10),
+          cardName,
+          amount: Number(h.amount || 0),
+          note: h.note || "",
+          billDate: bill.statementDate,
+        });
       });
     });
     return all.sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
-  }, [allBillsFlat, cards]);
+  }, [allBillsFlat, cards, deletedCards]);
 
-  // ── Insights ──
+  // ── Insights (fully dynamic — no static content) ──
   const insights = useMemo(() => {
     const list: { type: "warn" | "good" | "info"; text: string }[] = [];
     if (overdueCount > 0)
