@@ -1,484 +1,810 @@
+// src/components/reports/reports-view.tsx
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useMemo } from "react";
 import { useVaultStore } from "@/stores/vault-store";
-import { computeStatus, formatCurrency } from "@/lib/engine/cards";
-import { Modal } from "@/components/ui/modal";
-import { 
-  SlidersHorizontal, 
-  BarChart, 
-  Copy, 
-  Download, 
-  ChevronDown, 
-  Check, 
-  Minus, 
-  Plus,
-  Calendar as CalendarIcon,
+import { computeBillStatus, formatCurrency, getPaidTotal } from "@/lib/engine/cards";
+import type { BillCycle, CreditCard } from "@/types/card";
+import {
+  TrendingUp,
+  TrendingDown,
+  CreditCard as CreditCardIcon,
+  Calendar,
+  Download,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  AlertCircle,
+  CheckCircle2,
+  Clock,
+  BarChart2,
+  Zap,
 } from "lucide-react";
 import * as XLSX from "xlsx";
-import { 
-  format, addMonths, subMonths, startOfMonth, 
-  endOfMonth, eachDayOfInterval, isSameMonth, 
-  isSameDay, startOfWeek, endOfWeek 
-} from "date-fns";
 
-const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-// --- Custom Shadcn-Style Select ---
-function CustomSelect({ value, options, onChange, placeholder }: { value: string, options: {label: string, value: string}[], onChange: (val: string) => void, placeholder?: string }) {
-  const [open, setOpen] = useState(false);
-  const selectedLabel = options.find(o => o.value === value)?.label || placeholder || "Select...";
+interface MonthlyData {
+  key: string;          // "2026-05"
+  label: string;        // "May 2026"
+  shortLabel: string;   // "May"
+  billed: number;
+  paid: number;
+  outstanding: number;
+  count: number;
+}
+
+interface CardSummary {
+  card: CreditCard;
+  totalBilled: number;
+  totalPaid: number;
+  totalOutstanding: number;
+  allBills: BillCycle[];
+  lastActivity: string | null;
+  avgBill: number;
+  onTimeRate: number;  // % paid before or on due date
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const MONTHS_FULL  = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+function getMonthKey(dateStr: string): string {
+  return dateStr.slice(0, 7); // "YYYY-MM"
+}
+
+function getMonthLabel(key: string, short = false): string {
+  const [y, m] = key.split("-");
+  const idx = parseInt(m, 10) - 1;
+  return short ? MONTHS_SHORT[idx] : `${MONTHS_FULL[idx]} ${y}`;
+}
+
+function clamp(val: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, val));
+}
+
+function formatINR(amount: number): string {
+  if (amount >= 100000) return `₹${(amount / 100000).toFixed(1)}L`;
+  if (amount >= 1000)   return `₹${(amount / 1000).toFixed(1)}k`;
+  return `₹${amount.toFixed(0)}`;
+}
+
+function getDaysOverdue(bill: BillCycle): number {
+  if (computeBillStatus(bill) === "paid") return 0;
+  const due = new Date(bill.dueDate);
+  const today = new Date();
+  const diff = Math.floor((today.getTime() - due.getTime()) / 86400000);
+  return Math.max(0, diff);
+}
+
+// ─── Sub-components ──────────────────────────────────────────────────────────
+
+function StatCard({
+  label, value, sub, color, icon: Icon, trend,
+}: {
+  label: string; value: string; sub?: string;
+  color: "blue" | "green" | "red" | "amber" | "purple";
+  icon: React.ElementType;
+  trend?: { value: number; label: string };
+}) {
+  const colorMap = {
+    blue:   { bg: "bg-blue-500/10",   border: "border-blue-500/20",   text: "text-blue-400",   icon: "text-blue-400" },
+    green:  { bg: "bg-emerald-500/10",border: "border-emerald-500/20",text: "text-emerald-400",icon: "text-emerald-400" },
+    red:    { bg: "bg-red-500/10",    border: "border-red-500/20",    text: "text-red-400",    icon: "text-red-400" },
+    amber:  { bg: "bg-amber-500/10",  border: "border-amber-500/20",  text: "text-amber-400",  icon: "text-amber-400" },
+    purple: { bg: "bg-purple-500/10", border: "border-purple-500/20", text: "text-purple-400", icon: "text-purple-400" },
+  };
+  const c = colorMap[color];
 
   return (
-    <div className="relative">
-      <button type="button" onClick={() => setOpen(!open)} className="w-full h-11 flex justify-between items-center bg-[#1a2234] border border-white/10 rounded-[10px] px-3 text-[14px] text-white outline-none transition-colors hover:bg-white/5 focus:ring-1 focus:ring-blue-500">
-        <span className="truncate pr-2">{selectedLabel}</span>
-        <ChevronDown className={`size-4 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute top-full left-0 right-0 mt-1.5 p-1 bg-[#1a2234] border border-white/10 rounded-[10px] shadow-xl z-50 max-h-60 overflow-y-auto custom-scrollbar animate-in fade-in slide-in-from-top-1">
-            {options.map(o => (
-              <div key={o.value} onClick={() => { onChange(o.value); setOpen(false); }} className={`relative flex w-full cursor-pointer select-none items-center rounded-sm py-2 pl-8 pr-2 text-[13px] outline-none transition-colors ${value === o.value ? 'bg-blue-500/10 text-blue-400 font-medium' : 'text-slate-200 hover:bg-white/10 hover:text-white'}`}>
-                {value === o.value && <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center"><Check className="size-4" /></span>}
-                {o.label}
-              </div>
-            ))}
-          </div>
-        </>
+    <div className={`rounded-2xl border ${c.border} ${c.bg} p-4`}>
+      <div className="flex items-start justify-between mb-3">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{label}</p>
+        <Icon className={`size-4 ${c.icon}`} />
+      </div>
+      <p className={`text-2xl font-bold ${c.text}`}>{value}</p>
+      {sub && <p className="text-[11px] text-slate-500 mt-1">{sub}</p>}
+      {trend && (
+        <div className="flex items-center gap-1 mt-2">
+          {trend.value >= 0
+            ? <TrendingUp className="size-3 text-emerald-400" />
+            : <TrendingDown className="size-3 text-red-400" />}
+          <span className={`text-[11px] font-medium ${trend.value >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+            {Math.abs(trend.value).toFixed(0)}% {trend.label}
+          </span>
+        </div>
       )}
     </div>
   );
 }
 
-// --- Custom Shadcn-Style Calendar Picker (Replaces ugly HTML calendar) ---
-function CustomDatePicker({ value, onChange, placeholder }: { value: Date | undefined, onChange: (val: Date) => void, placeholder: string }) {
-  const [open, setOpen] = useState(false);
-  const [currentMonth, setCurrentMonth] = useState(value || new Date());
+// Mini bar chart (SVG-based, matching dark theme)
+function SpendingBarChart({ data, height = 80 }: { data: MonthlyData[]; height?: number }) {
+  if (data.length === 0) return null;
+  const maxVal = Math.max(...data.map(d => d.billed), 1);
+  const barW = Math.max(14, Math.floor((280 - (data.length - 1) * 4) / data.length));
 
-  const handleSelect = (date: Date) => { onChange(date); setOpen(false); };
+  return (
+    <div className="overflow-x-auto">
+      <svg
+        width="100%"
+        viewBox={`0 0 ${Math.max(280, data.length * (barW + 4))} ${height + 24}`}
+        style={{ minWidth: `${data.length * (barW + 4)}px` }}
+      >
+        {data.map((d, i) => {
+          const x = i * (barW + 4);
+          const billedH = Math.max(2, (d.billed / maxVal) * height);
+          const paidH   = Math.max(0, (d.paid   / maxVal) * height);
+          return (
+            <g key={d.key}>
+              {/* billed bar (background) */}
+              <rect
+                x={x} y={height - billedH}
+                width={barW} height={billedH}
+                rx={3}
+                fill="rgba(59,130,246,0.15)"
+              />
+              {/* paid bar (foreground) */}
+              {paidH > 0 && (
+                <rect
+                  x={x} y={height - paidH}
+                  width={barW} height={paidH}
+                  rx={3}
+                  fill="rgba(16,185,129,0.6)"
+                />
+              )}
+              {/* month label */}
+              <text
+                x={x + barW / 2} y={height + 16}
+                textAnchor="middle"
+                fontSize="10"
+                fill="rgba(148,163,184,0.8)"
+              >
+                {d.shortLabel}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
 
-  const days = eachDayOfInterval({
-    start: startOfWeek(startOfMonth(currentMonth)),
-    end: endOfWeek(endOfMonth(currentMonth))
+// Donut chart for card split
+function DonutChart({ slices }: { slices: { label: string; value: number; color: string }[] }) {
+  const total = slices.reduce((s, x) => s + x.value, 0);
+  if (total === 0) return <div className="text-[12px] text-slate-500 text-center py-4">No data</div>;
+
+  const r = 44, cx = 52, cy = 52;
+  const circumference = 2 * Math.PI * r;
+  let offset = 0;
+
+  return (
+    <svg width="104" height="104" viewBox="0 0 104 104">
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="14" />
+      {slices.map((s, i) => {
+        const dash = (s.value / total) * circumference;
+        const gap  = circumference - dash;
+        const el = (
+          <circle
+            key={i}
+            cx={cx} cy={cy} r={r}
+            fill="none"
+            stroke={s.color}
+            strokeWidth="14"
+            strokeDasharray={`${dash} ${gap}`}
+            strokeDashoffset={-offset}
+            style={{ transform: "rotate(-90deg)", transformOrigin: "52px 52px" }}
+          />
+        );
+        offset += dash;
+        return el;
+      })}
+      <text x={cx} y={cy - 5} textAnchor="middle" fontSize="11" fontWeight="600" fill="rgba(248,250,252,0.9)">
+        {slices.length}
+      </text>
+      <text x={cx} y={cy + 9} textAnchor="middle" fontSize="9" fill="rgba(148,163,184,0.7)">
+        cards
+      </text>
+    </svg>
+  );
+}
+
+// Payment heatmap grid (last 12 months × days)
+function MonthlyHeatmap({ allBills }: { allBills: BillCycle[] }) {
+  // Build a map of date → total payments
+  const payMap: Record<string, number> = {};
+
+  allBills.forEach(bill => {
+    (bill.history || []).forEach(h => {
+      const dateKey = (h.date || h.ts || "").slice(0, 10);
+      if (dateKey) payMap[dateKey] = (payMap[dateKey] || 0) + Number(h.amount || 0);
+    });
   });
 
-  return (
-    <div className="relative w-full">
-      <button type="button" onClick={() => setOpen(!open)} className={`w-full h-11 flex items-center justify-start gap-2 px-3 bg-[#1a2234] border border-white/10 rounded-[10px] text-[13px] transition-colors hover:bg-white/5 outline-none focus:ring-1 focus:ring-blue-500 ${value ? 'text-white' : 'text-slate-400'}`}>
-        <CalendarIcon className="size-4 opacity-50" />
-        {value ? format(value, "PPP") : placeholder}
-      </button>
+  // Last 16 weeks
+  const today = new Date();
+  const weeks: string[][] = [];
+  const startDate = new Date(today);
+  startDate.setDate(today.getDate() - 7 * 16 + 1);
 
-      {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute top-full left-0 mt-2 p-3 bg-[#1a2234] border border-white/10 rounded-[10px] shadow-xl z-50 w-[280px] animate-in fade-in slide-in-from-top-2">
-            <div className="flex items-center justify-between mb-4">
-              <button type="button" onClick={() => setCurrentMonth(subMonths(currentMonth, 1))} className="p-1.5 hover:bg-white/10 rounded-md transition-colors"><ChevronLeft className="size-4 text-slate-300" /></button>
-              <div className="text-[14px] font-medium text-white">{format(currentMonth, "MMMM yyyy")}</div>
-              <button type="button" onClick={() => setCurrentMonth(addMonths(currentMonth, 1))} className="p-1.5 hover:bg-white/10 rounded-md transition-colors"><ChevronRight className="size-4 text-slate-300" /></button>
-            </div>
-            <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-medium text-slate-400 mb-2">
-              {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d => <div key={d}>{d}</div>)}
-            </div>
-            <div className="grid grid-cols-7 gap-1">
-              {days.map((day, i) => {
-                const isSelected = value && isSameDay(day, value);
-                const isCurrentMonth = isSameMonth(day, currentMonth);
-                return (
-                  <button type="button" key={i} onClick={() => handleSelect(day)} className={`h-8 w-full flex items-center justify-center rounded-md text-[13px] transition-colors ${isSelected ? 'bg-blue-500 text-white font-medium shadow-sm' : isCurrentMonth ? 'text-slate-200 hover:bg-white/10' : 'text-slate-600 hover:bg-white/5'}`}>
-                    {format(day, "d")}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        </>
-      )}
+  for (let w = 0; w < 16; w++) {
+    const week: string[] = [];
+    for (let d = 0; d < 7; d++) {
+      const dt = new Date(startDate);
+      dt.setDate(startDate.getDate() + w * 7 + d);
+      week.push(dt.toISOString().slice(0, 10));
+    }
+    weeks.push(week);
+  }
+
+  const maxPay = Math.max(...Object.values(payMap), 1);
+
+  const cellSize = 13;
+  const gap = 2;
+  const dayLabels = ["M", "W", "F", "S"];
+
+  return (
+    <div className="overflow-x-auto">
+      <svg
+        width="100%"
+        viewBox={`0 0 ${16 * (cellSize + gap) + 14} ${7 * (cellSize + gap) + 4}`}
+        style={{ minWidth: `${16 * (cellSize + gap) + 14}px` }}
+      >
+        {/* Day labels */}
+        {[1, 3, 5, 6].map((d, i) => (
+          <text key={d} x="10" y={(d + 0.7) * (cellSize + gap)} fontSize="8" fill="rgba(148,163,184,0.5)" textAnchor="middle">
+            {dayLabels[i]}
+          </text>
+        ))}
+
+        {weeks.map((week, wi) => (
+          week.map((dateStr, di) => {
+            const x = 14 + wi * (cellSize + gap);
+            const y = di * (cellSize + gap);
+            const val = payMap[dateStr] || 0;
+            const intensity = val > 0 ? clamp(val / maxPay, 0.15, 1) : 0;
+            const isToday = dateStr === today.toISOString().slice(0, 10);
+
+            let fill = "rgba(255,255,255,0.04)";
+            if (val > 0) {
+              const g = Math.round(intensity * 185);
+              fill = `rgba(16, ${g}, 129, ${0.3 + intensity * 0.5})`;
+            }
+            if (isToday) fill = "rgba(59,130,246,0.4)";
+
+            return (
+              <rect
+                key={dateStr}
+                x={x} y={y}
+                width={cellSize} height={cellSize}
+                rx={2}
+                fill={fill}
+                stroke={isToday ? "rgba(59,130,246,0.8)" : "none"}
+                strokeWidth="1"
+              />
+            );
+          })
+        ))}
+      </svg>
     </div>
   );
 }
 
+// ─── Main Component ───────────────────────────────────────────────────────────
+
 export function ReportsView() {
-  const cards = useVaultStore((s) => s.vault.cards);
-  
-  const [isConfigOpen, setConfigOpen] = useState(false);
-  const [reportType, setReportType] = useState("monthly");
-  const [month, setMonth] = useState(new Date().getMonth().toString());
-  const [year, setYear] = useState(new Date().getFullYear().toString());
-  const [cardId, setCardId] = useState("");
-  
-  const [fromDate, setFromDate] = useState<Date>();
-  const [toDate, setToDate] = useState<Date>();
-  const [reportData, setReportData] = useState<any>(null);
+  const cards       = useVaultStore(s => s.vault.cards);
+  const archiveVault = useVaultStore(s => s.archiveVault);
+  const archivedBills = archiveVault?.archivedBills || [];
 
-  const getPaidTotal = (c: any) => (c.history || []).reduce((sum: number, h: any) => sum + Number(h.amount || 0), 0);
+  const [selectedCardId, setSelectedCardId] = useState<string | "all">("all");
+  const [monthOffset, setMonthOffset] = useState(0); // 0 = current, -1 = last, etc.
 
-  const generateReport = useCallback(() => {
-    let html = null;
-    let csv: any[] = [];
-    
-    if (reportType === 'monthly') {
-      let tb = 0, tp = 0;
-      csv = [['Card', 'Bill Day', 'Due Day', 'Total Bill', 'Paid', 'Outstanding', 'Status']];
-      const rows = cards.map(c => {
-        const paid = getPaidTotal(c), bill = parseFloat(String(c.totalBill)) || 0, out = bill - paid, st = computeStatus(c);
-        tb += bill; tp += paid;
-        csv.push([c.name, c.billDay + 'th', c.dueDay + 'th', bill || 0, paid || 0, out > 0 ? out : 0, st]);
-        return { name: c.name, bill, paid, out: out > 0 ? out : 0, status: st };
+  // ── Combine all bills (active + archived) per card ──
+  const allBillsFlat = useMemo<BillCycle[]>(() => {
+    const active = cards.flatMap(c => c.activeBills || []);
+    return [...active, ...archivedBills];
+  }, [cards, archivedBills]);
+
+  // ── Card summaries ──
+  const cardSummaries = useMemo<CardSummary[]>(() => {
+    return cards.map(card => {
+      const cardBills = allBillsFlat.filter(b => b.cardId === card.id);
+      const totalBilled = cardBills.reduce((s, b) => s + Number(b.billedAmount || 0), 0);
+      const totalPaid   = cardBills.reduce((s, b) => s + getPaidTotal(b), 0);
+      const allPayDates = cardBills.flatMap(b => (b.history || []).map(h => h.date || h.ts || "")).filter(Boolean);
+      const lastActivity = allPayDates.length > 0 ? allPayDates.sort().at(-1) || null : null;
+      const paidBills = cardBills.filter(b => computeBillStatus(b) === "paid");
+      const avgBill = paidBills.length > 0
+        ? paidBills.reduce((s, b) => s + Number(b.billedAmount || 0), 0) / paidBills.length
+        : 0;
+
+      // On-time: paid before or on due date
+      let onTimeCount = 0;
+      paidBills.forEach(b => {
+        const lastPay = (b.history || []).map(h => h.date || h.ts || "").filter(Boolean).sort().at(-1);
+        if (lastPay && lastPay <= b.dueDate) onTimeCount++;
       });
-      html = { title: `Monthly Summary — ${MONTHS[parseInt(month)]} ${year}`, type: 'summary', rows, tb, tp, out: (tb - tp > 0 ? tb - tp : 0) };
-    } 
-    else if (reportType === 'card') {
-      const c = cards.find(x => x.id === cardId) || cards[0];
-      if (c) {
-        csv = [['Date', 'Amount', 'Note']];
-        let tot = 0;
-        const hist = (c.history || []).filter(h => h.amount).map(h => {
-          tot += parseFloat(String(h.amount)) || 0;
-          csv.push([h.date || '', parseFloat(String(h.amount)) || 0, h.note || '']);
-          return { date: h.date || '—', amount: parseFloat(String(h.amount)) || 0, note: h.note || '—' };
-        });
-        html = { title: `${c.name} — History`, type: 'history', rows: hist, tot };
+      const onTimeRate = paidBills.length > 0 ? (onTimeCount / paidBills.length) * 100 : 100;
+
+      return {
+        card,
+        totalBilled,
+        totalPaid,
+        totalOutstanding: Math.max(0, totalBilled - totalPaid),
+        allBills: cardBills,
+        lastActivity,
+        avgBill,
+        onTimeRate,
+      };
+    });
+  }, [cards, allBillsFlat]);
+
+  // ── Monthly trend (last 12 months) ──
+  const monthlyData = useMemo<MonthlyData[]>(() => {
+    const today = new Date();
+    const months: MonthlyData[] = [];
+
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      months.push({
+        key,
+        label: getMonthLabel(key),
+        shortLabel: MONTHS_SHORT[d.getMonth()],
+        billed: 0,
+        paid: 0,
+        outstanding: 0,
+        count: 0,
+      });
+    }
+
+    const billsToUse = selectedCardId === "all"
+      ? allBillsFlat
+      : allBillsFlat.filter(b => b.cardId === selectedCardId);
+
+    billsToUse.forEach(bill => {
+      const mk = getMonthKey(bill.statementDate);
+      const slot = months.find(m => m.key === mk);
+      if (slot) {
+        slot.billed += Number(bill.billedAmount || 0);
+        slot.paid   += getPaidTotal(bill);
+        slot.outstanding += Math.max(0, Number(bill.billedAmount || 0) - getPaidTotal(bill));
+        slot.count++;
       }
-    }
-    else if (reportType === 'all') {
-      csv = [['Date', 'Card', 'Amount', 'Note']];
-      let tot = 0;
-      const rows: any[] = [];
-      cards.forEach(c => {
-         (c.history || []).filter(h => h.amount).forEach(h => {
-            rows.push({ date: h.date || '—', card: c.name, amount: parseFloat(String(h.amount)) || 0, note: h.note || '—', ts: h.ts || h.date });
-         });
-      });
-      rows.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
-      rows.forEach(r => {
-         tot += r.amount;
-         csv.push([r.date, r.card, r.amount, r.note]);
-      });
-      html = { title: `All Transactions History`, type: 'all', rows, tot };
-    }
-    else if (reportType === 'yearly') {
-      csv = [['Card', 'Total Paid']];
-      let tot = 0;
-      const rows = cards.map(c => {
-         const yHist = (c.history || []).filter(h => h.amount && (h.date?.startsWith(year) || h.ts?.startsWith(year)));
-         const p = yHist.reduce((s, h) => s + (parseFloat(String(h.amount)) || 0), 0);
-         tot += p;
-         csv.push([c.name, p]);
-         return { name: c.name, paid: p };
-      });
-      html = { title: `Yearly Overview — ${year}`, type: 'yearly', rows, tot };
-    }
-    else if (reportType === 'custom') {
-      csv = [['Date', 'Card', 'Amount', 'Note']];
-      let tot = 0;
-      const rows: any[] = [];
-      const dStart = fromDate ? fromDate.getTime() : 0;
-      const dEnd = toDate ? toDate.getTime() : Infinity;
+    });
 
-      cards.forEach(c => {
-         (c.history || []).filter(h => h.amount).forEach(h => {
-            const dTime = new Date(h.date || h.ts || 0).getTime();
-            if (dTime >= dStart && dTime <= dEnd) {
-               rows.push({ date: h.date || '—', card: c.name, amount: parseFloat(String(h.amount)) || 0, note: h.note || '—', ts: h.ts || h.date });
-            }
-         });
-      });
-      rows.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
-      rows.forEach(r => {
-         tot += r.amount;
-         csv.push([r.date, r.card, r.amount, r.note]);
-      });
-      const fromStr = fromDate ? format(fromDate, 'MMM dd, yyyy') : 'Any';
-      const toStr = toDate ? format(toDate, 'MMM dd, yyyy') : 'Any';
-      html = { title: `Custom Range (${fromStr} to ${toStr})`, type: 'all', rows, tot };
-    }
+    return months;
+  }, [allBillsFlat, selectedCardId]);
 
-    setReportData({ html, csv });
-    setConfigOpen(false);
-  }, [cards, reportType, month, year, cardId, fromDate, toDate]);
+  // ── Selected month stats ──
+  const selectedMonth = useMemo(() => {
+    const idx = monthlyData.length - 1 + monthOffset;
+    return monthlyData[Math.max(0, Math.min(monthlyData.length - 1, idx))];
+  }, [monthlyData, monthOffset]);
 
-  useEffect(() => {
-    if (!reportData && cards.length > 0) {
-      if (!cardId && cards.length > 0) setCardId(cards[0].id);
-      generateReport();
-    }
-  }, [cards.length, reportData, generateReport, cardId]);
+  const prevMonth = monthlyData[Math.max(0, monthlyData.length - 2 + monthOffset)];
 
-  const copyCsv = () => {
-    if (!reportData?.csv) return;
-    const csvStr = reportData.csv.map((r: any) => r.map((v: any) => '"' + String(v).replace(/"/g, '""') + '"').join(',')).join('\n');
-    navigator.clipboard.writeText(csvStr);
-    alert("Copied to clipboard!");
-  };
+  // ── Overall stats ──
+  const totalBilled = useMemo(
+    () => cardSummaries.reduce((s, c) => s + c.totalBilled, 0),
+    [cardSummaries]
+  );
+  const totalPaid = useMemo(
+    () => cardSummaries.reduce((s, c) => s + c.totalPaid, 0),
+    [cardSummaries]
+  );
+  const totalOutstanding = useMemo(
+    () => cardSummaries.reduce((s, c) => s + c.totalOutstanding, 0),
+    [cardSummaries]
+  );
 
-  const downloadExcel = () => {
-    if (!reportData?.html) return;
-    const { type, rows, tb, tp, out, tot, title } = reportData.html;
+  // Active unpaid bills
+  const overdueCount = useMemo(
+    () => cards.flatMap(c => c.activeBills || [])
+      .filter(b => computeBillStatus(b) !== "paid" && getDaysOverdue(b) > 0)
+      .length,
+    [cards]
+  );
 
+  // This month billed vs last month
+  const thisMonthBilled = monthlyData.at(-1)?.billed || 0;
+  const lastMonthBilled = monthlyData.at(-2)?.billed || 0;
+  const billedTrend = lastMonthBilled > 0 ? ((thisMonthBilled - lastMonthBilled) / lastMonthBilled) * 100 : 0;
+
+  // Avg monthly spend (last 6 months with data)
+  const last6 = monthlyData.slice(-6).filter(m => m.billed > 0);
+  const avgMonthlyBilled = last6.length > 0 ? last6.reduce((s, m) => s + m.billed, 0) / last6.length : 0;
+
+  // Donut slices
+  const donutSlices = useMemo(() => {
+    const COLORS = ["#3b82f6","#10b981","#f59e0b","#ef4444","#8b5cf6","#ec4899","#06b6d4","#84cc16"];
+    return cardSummaries
+      .filter(c => c.totalBilled > 0)
+      .map((c, i) => ({ label: c.card.name, value: c.totalBilled, color: COLORS[i % COLORS.length] }));
+  }, [cardSummaries]);
+
+  // ── Excel Export ──
+  function handleExport() {
     const wb = XLSX.utils.book_new();
-    const wsData: any[][] = [];
 
-    wsData.push([title]);
-    wsData.push([]); 
+    // Sheet 1: Summary
+    const summaryRows: any[][] = [
+      ["Duely — Financial Summary Export"],
+      ["Generated:", new Date().toLocaleString("en-IN")],
+      [],
+      ["Card Name", "Total Billed", "Total Paid", "Outstanding", "Avg Bill", "On-Time Rate"],
+    ];
+    cardSummaries.forEach(c => {
+      summaryRows.push([
+        c.card.name,
+        c.totalBilled,
+        c.totalPaid,
+        c.totalOutstanding,
+        c.avgBill.toFixed(0),
+        `${c.onTimeRate.toFixed(0)}%`,
+      ]);
+    });
+    summaryRows.push([]);
+    summaryRows.push(["Grand Total", totalBilled, totalPaid, totalOutstanding, "", ""]);
+    const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
+    wsSummary["!cols"] = [{ wch: 22 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 14 }];
+    XLSX.utils.book_append_sheet(wb, wsSummary, "Summary");
 
-    if (type === 'summary') {
-      wsData.push(['Card Name', 'Total Bill', 'Total Paid', 'Outstanding Due', 'Payment Status']);
-      rows.forEach((r: any) => wsData.push([r.name, r.bill, r.paid, r.out, r.status]));
-      wsData.push([]);
-      wsData.push(['Grand Total', tb, tp, out, '']);
-    } else if (type === 'history') {
-      wsData.push(['Date Logged', 'Amount Paid', 'Notes/Remarks']);
-      rows.forEach((r: any) => wsData.push([r.date, r.amount, r.note]));
-      wsData.push([]);
-      wsData.push(['Total Paid', tot, '']);
-    } else if (type === 'all' || type === 'custom') {
-      wsData.push(['Date Logged', 'Card Name', 'Amount Paid', 'Notes/Remarks']);
-      rows.forEach((r: any) => wsData.push([r.date, r.card, r.amount, r.note]));
-      wsData.push([]);
-      wsData.push(['Total Paid', '', tot, '']);
-    } else if (type === 'yearly') {
-      wsData.push(['Card Name', 'Total Amount Paid']);
-      rows.forEach((r: any) => wsData.push([r.name, r.paid]));
-      wsData.push([]);
-      wsData.push(['Grand Total', tot]);
-    }
+    // Sheet 2: Monthly Trend
+    const trendRows: any[][] = [["Month", "Billed", "Paid", "Outstanding", "Bill Count"]];
+    monthlyData.forEach(m => trendRows.push([m.label, m.billed, m.paid, m.outstanding, m.count]));
+    const wsTrend = XLSX.utils.aoa_to_sheet(trendRows);
+    wsTrend["!cols"] = [{ wch: 16 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(wb, wsTrend, "Monthly Trend");
 
-    const ws = XLSX.utils.aoa_to_sheet(wsData);
-    const colWidths = wsData.map(row => row.map(val => (val == null ? 10 : val.toString().length)));
-    const maxColWidths = colWidths.reduce((acc, row) => {
-      row.forEach((len, i) => { if (!acc[i] || acc[i] < len) acc[i] = len; });
-      return acc;
-    }, []);
-    ws['!cols'] = maxColWidths.map(w => ({ wch: w + 2 }));
+    // Sheet 3: All Transactions
+    const txRows: any[][] = [["Date", "Card", "Bill Statement Date", "Amount Paid", "Note"]];
+    allBillsFlat.forEach(bill => {
+      const card = cards.find(c => c.id === bill.cardId);
+      (bill.history || []).forEach(h => {
+        txRows.push([
+          h.date || h.ts?.slice(0, 10) || "",
+          card?.name || bill.cardId,
+          bill.statementDate,
+          Number(h.amount || 0),
+          h.note || "",
+        ]);
+      });
+    });
+    txRows.sort((a, b) => String(b[0]).localeCompare(String(a[0])));
+    const wsTx = XLSX.utils.aoa_to_sheet(txRows);
+    wsTx["!cols"] = [{ wch: 12 }, { wch: 22 }, { wch: 18 }, { wch: 14 }, { wch: 24 }];
+    XLSX.utils.book_append_sheet(wb, wsTx, "All Transactions");
 
-    XLSX.utils.book_append_sheet(wb, ws, 'Report');
-    XLSX.writeFile(wb, `Duely_Report_${reportType}_${new Date().toISOString().slice(0, 10)}.xlsx`);
-  };
+    XLSX.writeFile(wb, `Duely_Report_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  }
 
-  const renderTable = () => {
-    if (!reportData?.html) return null;
-    const { type, rows, tb, tp, out, tot } = reportData.html;
+  // ── Latest transactions ──
+  const recentTransactions = useMemo(() => {
+    const all: { date: string; cardName: string; amount: number; note: string; billDate: string }[] = [];
+    allBillsFlat.forEach(bill => {
+      const card = cards.find(c => c.id === bill.cardId);
+      (bill.history || []).forEach(h => {
+        all.push({
+          date: h.date || (h.ts || "").slice(0, 10),
+          cardName: card?.name || "Unknown",
+          amount: Number(h.amount || 0),
+          note: h.note || "",
+          billDate: bill.statementDate,
+        });
+      });
+    });
+    return all.sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
+  }, [allBillsFlat, cards]);
 
-    if (type === 'summary') {
-      return (
-        <table className="w-full text-left text-[12px] whitespace-nowrap">
-          <thead className="bg-white/5 border-b border-white/10 uppercase tracking-wider text-[11px] text-slate-400">
-            <tr><th className="p-3 font-medium">Card</th><th className="p-3 font-medium">Bill</th><th className="p-3 font-medium">Paid</th><th className="p-3 font-medium">Due</th><th className="p-3 font-medium">Status</th></tr>
-          </thead>
-          <tbody className="divide-y divide-white/5 text-slate-200">
-            {rows.map((r: any, i: number) => (
-              <tr key={i} className="hover:bg-white/5">
-                <td className="p-3">{r.name}</td>
-                <td className="p-3">{r.bill ? formatCurrency(r.bill) : '—'}</td>
-                <td className="p-3">{r.paid ? formatCurrency(r.paid) : '—'}</td>
-                <td className="p-3">{r.out ? formatCurrency(r.out) : '—'}</td>
-                <td className={`p-3 font-medium ${r.status === 'paid' ? 'text-green-400' : r.status === 'partial' ? 'text-orange-400' : 'text-red-400'}`}>{r.status}</td>
-              </tr>
-            ))}
-            <tr className="bg-white/5 font-semibold">
-              <td className="p-3">Total</td>
-              <td className="p-3">{formatCurrency(tb)}</td>
-              <td className="p-3 text-green-400">{formatCurrency(tp)}</td>
-              <td className="p-3 text-red-400">{formatCurrency(out)}</td>
-              <td className="p-3"></td>
-            </tr>
-          </tbody>
-        </table>
-      );
-    } 
-    
-    if (type === 'history') {
-      return (
-        <table className="w-full text-left text-[12px] whitespace-nowrap">
-          <thead className="bg-white/5 border-b border-white/10 uppercase tracking-wider text-[11px] text-slate-400">
-            <tr><th className="p-3 font-medium">Date</th><th className="p-3 font-medium">Amount</th><th className="p-3 font-medium">Note</th></tr>
-          </thead>
-          <tbody className="divide-y divide-white/5 text-slate-200">
-            {rows.map((r: any, i: number) => (
-              <tr key={i} className="hover:bg-white/5">
-                <td className="p-3">{r.date}</td>
-                <td className="p-3">{formatCurrency(r.amount)}</td>
-                <td className="p-3 text-slate-400">{r.note}</td>
-              </tr>
-            ))}
-            <tr className="bg-white/5 font-semibold">
-              <td className="p-3">Total</td>
-              <td className="p-3 text-green-400">{formatCurrency(tot)}</td>
-              <td className="p-3"></td>
-            </tr>
-          </tbody>
-        </table>
-      );
-    }
+  // ── Insights ──
+  const insights = useMemo(() => {
+    const list: { type: "warn" | "good" | "info"; text: string }[] = [];
 
-    if (type === 'all' || type === 'custom') {
-      return (
-        <table className="w-full text-left text-[12px] whitespace-nowrap">
-          <thead className="bg-white/5 border-b border-white/10 uppercase tracking-wider text-[11px] text-slate-400">
-            <tr><th className="p-3 font-medium">Date</th><th className="p-3 font-medium">Card</th><th className="p-3 font-medium">Amount</th><th className="p-3 font-medium">Note</th></tr>
-          </thead>
-          <tbody className="divide-y divide-white/5 text-slate-200">
-            {rows.map((r: any, i: number) => (
-              <tr key={i} className="hover:bg-white/5">
-                <td className="p-3">{r.date}</td>
-                <td className="p-3">{r.card}</td>
-                <td className="p-3">{formatCurrency(r.amount)}</td>
-                <td className="p-3 text-slate-400">{r.note}</td>
-              </tr>
-            ))}
-            <tr className="bg-white/5 font-semibold">
-              <td className="p-3">Total</td>
-              <td className="p-3"></td>
-              <td className="p-3 text-green-400">{formatCurrency(tot)}</td>
-              <td className="p-3"></td>
-            </tr>
-          </tbody>
-        </table>
-      );
-    }
+    if (overdueCount > 0)
+      list.push({ type: "warn", text: `${overdueCount} bill${overdueCount > 1 ? "s are" : " is"} overdue — pay now to avoid late fees` });
 
-    if (type === 'yearly') {
-      return (
-        <table className="w-full text-left text-[12px] whitespace-nowrap">
-          <thead className="bg-white/5 border-b border-white/10 uppercase tracking-wider text-[11px] text-slate-400">
-            <tr><th className="p-3 font-medium">Card</th><th className="p-3 font-medium">Total Paid</th></tr>
-          </thead>
-          <tbody className="divide-y divide-white/5 text-slate-200">
-            {rows.map((r: any, i: number) => (
-              <tr key={i} className="hover:bg-white/5">
-                <td className="p-3">{r.name}</td>
-                <td className="p-3">{formatCurrency(r.paid)}</td>
-              </tr>
-            ))}
-            <tr className="bg-white/5 font-semibold">
-              <td className="p-3">Total</td>
-              <td className="p-3 text-green-400">{formatCurrency(tot)}</td>
-            </tr>
-          </tbody>
-        </table>
-      );
-    }
-    
-    return null;
-  };
+    const highOutstanding = cardSummaries.filter(c => c.totalOutstanding > 5000);
+    if (highOutstanding.length > 0)
+      list.push({ type: "warn", text: `High outstanding on ${highOutstanding.map(c => c.card.name).join(", ")}` });
+
+    const lowOnTime = cardSummaries.filter(c => c.onTimeRate < 70 && c.allBills.length >= 2);
+    if (lowOnTime.length > 0)
+      list.push({ type: "warn", text: `Late payments on ${lowOnTime.map(c => c.card.name).join(", ")} — consider setting reminders` });
+
+    if (billedTrend > 20)
+      list.push({ type: "warn", text: `Spending up ${billedTrend.toFixed(0)}% vs last month — watch your usage` });
+
+    if (billedTrend < -15 && billedTrend !== 0)
+      list.push({ type: "good", text: `Spending down ${Math.abs(billedTrend).toFixed(0)}% vs last month — great progress!` });
+
+    if (totalOutstanding === 0 && totalBilled > 0)
+      list.push({ type: "good", text: "All bills fully paid — excellent track record!" });
+
+    const allOnTime = cardSummaries.every(c => c.onTimeRate >= 90);
+    if (allOnTime && cards.length > 0)
+      list.push({ type: "good", text: "90%+ on-time payment rate across all cards" });
+
+    if (list.length === 0)
+      list.push({ type: "info", text: "Keep logging bills and payments for personalized insights" });
+
+    return list.slice(0, 4);
+  }, [cardSummaries, overdueCount, totalOutstanding, totalBilled, billedTrend, cards]);
+
+  const hasNoCards = cards.length === 0;
+
+  if (hasNoCards) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center animate-in fade-in duration-300">
+        <BarChart2 className="size-12 text-slate-600 mb-4" />
+        <p className="text-slate-400 font-medium">No data yet</p>
+        <p className="text-slate-500 text-[13px] mt-1">Add cards and log bills to see insights here</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5 pb-8 animate-in fade-in duration-300">
+
+      {/* ── Header ── */}
       <div className="flex items-center justify-between">
-        <h2 className="text-[14px] font-semibold text-slate-300">Reports</h2>
-        <button type="button" onClick={() => setConfigOpen(true)} className="flex items-center gap-1.5 bg-[#111827] border border-white/10 text-[12px] font-medium text-white hover:bg-white/5 h-9 px-4 rounded-[10px] transition-colors">
-          <SlidersHorizontal className="size-3.5" /> Configure
+        <div>
+          <h2 className="text-[15px] font-semibold text-white">Analytics</h2>
+          <p className="text-[11px] text-slate-500 mt-0.5">All {cards.length} card{cards.length !== 1 ? "s" : ""} · {allBillsFlat.length} statements tracked</p>
+        </div>
+        <button
+          onClick={handleExport}
+          className="flex items-center gap-1.5 text-[12px] font-medium text-slate-300 bg-[#111827] border border-white/10 rounded-[10px] px-3 py-2 hover:bg-white/5 transition-colors"
+        >
+          <Download className="size-3.5" /> Export Excel
         </button>
       </div>
 
-      {!reportData ? (
-        <div className="flex flex-col items-center justify-center py-16 text-center border border-white/5 bg-[#111827]/50 rounded-2xl animate-in fade-in">
-          <BarChart className="size-12 text-slate-500 mb-3 opacity-50" />
-          <p className="text-sm text-slate-400">Generating report...</p>
+      {/* ── Top KPIs ── */}
+      <div className="grid grid-cols-2 gap-3">
+        <StatCard
+          label="Total billed"
+          value={formatCurrency(totalBilled)}
+          sub={`avg ${formatINR(avgMonthlyBilled)}/mo`}
+          color="blue"
+          icon={CreditCardIcon}
+          trend={billedTrend !== 0 ? { value: billedTrend, label: "vs last month" } : undefined}
+        />
+        <StatCard
+          label="Total paid"
+          value={formatCurrency(totalPaid)}
+          sub={totalBilled > 0 ? `${((totalPaid / totalBilled) * 100).toFixed(0)}% cleared` : undefined}
+          color="green"
+          icon={CheckCircle2}
+        />
+        <StatCard
+          label="Outstanding"
+          value={formatCurrency(totalOutstanding)}
+          sub={totalOutstanding > 0 ? `across ${cardSummaries.filter(c => c.totalOutstanding > 0).length} card(s)` : "fully cleared"}
+          color={totalOutstanding > 0 ? "red" : "green"}
+          icon={AlertCircle}
+        />
+        <StatCard
+          label="Overdue bills"
+          value={String(overdueCount)}
+          sub={overdueCount > 0 ? "needs immediate attention" : "all on schedule"}
+          color={overdueCount > 0 ? "amber" : "green"}
+          icon={Clock}
+        />
+      </div>
+
+      {/* ── Insights ── */}
+      <div className="rounded-2xl border border-white/10 bg-[#111827] p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <Zap className="size-3.5 text-amber-400" />
+          <p className="text-[12px] font-semibold text-slate-300 uppercase tracking-wider">Smart insights</p>
         </div>
-      ) : (
-        <div className="space-y-3 animate-in fade-in slide-in-from-bottom-2">
-          <h3 className="text-[13px] font-medium text-slate-400 px-1">{reportData.html.title}</h3>
-          
-          <div className="rounded-[10px] border border-white/10 bg-[#111827] overflow-x-auto">
-            {renderTable()}
+        <div className="space-y-2">
+          {insights.map((ins, i) => (
+            <div key={i} className="flex items-start gap-2.5">
+              <div className={`mt-1 size-1.5 rounded-full shrink-0 ${ins.type === "warn" ? "bg-amber-400" : ins.type === "good" ? "bg-emerald-400" : "bg-blue-400"}`} />
+              <p className={`text-[12px] leading-relaxed ${ins.type === "warn" ? "text-amber-300/90" : ins.type === "good" ? "text-emerald-300/90" : "text-slate-400"}`}>
+                {ins.text}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Monthly Trend Chart ── */}
+      <div className="rounded-2xl border border-white/10 bg-[#111827] p-4">
+        <div className="flex items-center justify-between mb-1">
+          <p className="text-[12px] font-semibold text-slate-300 uppercase tracking-wider">12-month trend</p>
+          {/* Card filter */}
+          <select
+            value={selectedCardId}
+            onChange={e => setSelectedCardId(e.target.value)}
+            className="text-[11px] bg-[#1a2234] border border-white/10 rounded-[8px] px-2 py-1 text-slate-300 outline-none"
+          >
+            <option value="all">All cards</option>
+            {cards.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+
+        {/* Legend */}
+        <div className="flex items-center gap-4 mb-3">
+          <div className="flex items-center gap-1.5">
+            <div className="size-2 rounded-sm bg-blue-500/40" />
+            <span className="text-[10px] text-slate-500">Billed</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="size-2 rounded-sm bg-emerald-500/60" />
+            <span className="text-[10px] text-slate-500">Paid</span>
+          </div>
+        </div>
+
+        <SpendingBarChart data={monthlyData} height={72} />
+
+        {/* Month navigator */}
+        <div className="flex items-center justify-between mt-3 pt-3 border-t border-white/5">
+          <button
+            onClick={() => setMonthOffset(o => Math.max(o - 1, -(monthlyData.length - 1)))}
+            disabled={monthOffset <= -(monthlyData.length - 1)}
+            className="p-1 rounded-md text-slate-500 hover:text-white hover:bg-white/5 disabled:opacity-30 transition-colors"
+          >
+            <ChevronLeft className="size-4" />
+          </button>
+
+          <div className="text-center">
+            <p className="text-[13px] font-semibold text-white">{selectedMonth?.label || "—"}</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              {selectedMonth ? `${formatCurrency(selectedMonth.billed)} billed · ${formatCurrency(selectedMonth.paid)} paid` : ""}
+            </p>
+            {selectedMonth && prevMonth && prevMonth.billed > 0 && (
+              <p className={`text-[10px] mt-0.5 ${selectedMonth.billed > prevMonth.billed ? "text-red-400" : "text-emerald-400"}`}>
+                {selectedMonth.billed > prevMonth.billed ? "▲" : "▼"}{" "}
+                {Math.abs(((selectedMonth.billed - prevMonth.billed) / prevMonth.billed) * 100).toFixed(0)}% vs prior month
+              </p>
+            )}
           </div>
 
-          <div className="flex gap-2">
-            <button onClick={downloadExcel} className="flex-1 flex items-center justify-center gap-1.5 bg-blue-500/10 border border-blue-500/20 text-blue-400 hover:bg-blue-500/20 rounded-[10px] h-11 text-[12px] font-semibold transition-colors">
-              <Download className="size-3.5" /> Download Excel
-            </button>
-            <button onClick={copyCsv} className="flex items-center justify-center gap-1.5 bg-[#111827] border border-white/10 text-white hover:bg-white/5 rounded-[10px] h-11 px-4 text-[12px] font-medium transition-colors">
-              <Copy className="size-3.5" /> Copy CSV
-            </button>
+          <button
+            onClick={() => setMonthOffset(o => Math.min(o + 1, 0))}
+            disabled={monthOffset >= 0}
+            className="p-1 rounded-md text-slate-500 hover:text-white hover:bg-white/5 disabled:opacity-30 transition-colors"
+          >
+            <ChevronRight className="size-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* ── Card Breakdown ── */}
+      <div className="rounded-2xl border border-white/10 bg-[#111827] p-4">
+        <div className="flex items-center gap-3 mb-4">
+          <DonutChart slices={donutSlices} />
+          <div className="flex-1 min-w-0">
+            <p className="text-[12px] font-semibold text-slate-300 uppercase tracking-wider mb-2">Spend distribution</p>
+            <div className="space-y-1.5">
+              {donutSlices.slice(0, 5).map((s, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <div className="size-2 rounded-full shrink-0" style={{ background: s.color }} />
+                  <p className="text-[11px] text-slate-400 truncate flex-1">{s.label}</p>
+                  <p className="text-[11px] font-medium text-slate-300 shrink-0">
+                    {totalBilled > 0 ? `${((s.value / totalBilled) * 100).toFixed(0)}%` : "—"}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Per-card rows */}
+        <div className="space-y-2 border-t border-white/5 pt-3">
+          {cardSummaries.map(cs => {
+            const pct = cs.totalBilled > 0 ? (cs.totalPaid / cs.totalBilled) * 100 : 0;
+            const isDisabled = cs.card.disabled;
+
+            return (
+              <div key={cs.card.id} className={`${isDisabled ? "opacity-50" : ""}`}>
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <p className="text-[13px] font-medium text-white truncate">{cs.card.name}</p>
+                    {isDisabled && (
+                      <span className="text-[9px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded font-semibold uppercase shrink-0">off</span>
+                    )}
+                  </div>
+                  <div className="text-right shrink-0 ml-3">
+                    <p className="text-[12px] font-semibold text-white">{formatCurrency(cs.totalBilled)}</p>
+                    <p className="text-[10px] text-slate-500">{cs.allBills.length} stmt{cs.allBills.length !== 1 ? "s" : ""}</p>
+                  </div>
+                </div>
+
+                {/* Progress bar */}
+                <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all duration-500"
+                    style={{
+                      width: `${clamp(pct, 0, 100)}%`,
+                      background: pct >= 100 ? "#10b981" : pct > 50 ? "#f59e0b" : "#ef4444",
+                    }}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between mt-1">
+                  <p className="text-[10px] text-slate-500">
+                    paid {formatCurrency(cs.totalPaid)}
+                    {cs.totalOutstanding > 0 && <span className="text-red-400/80"> · owe {formatCurrency(cs.totalOutstanding)}</span>}
+                  </p>
+                  <p className="text-[10px] text-slate-500">avg {formatCurrency(cs.avgBill)}/bill</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── Payment Heatmap ── */}
+      <div className="rounded-2xl border border-white/10 bg-[#111827] p-4">
+        <p className="text-[12px] font-semibold text-slate-300 uppercase tracking-wider mb-1">Payment activity</p>
+        <p className="text-[11px] text-slate-500 mb-3">Last 16 weeks · each cell = one day</p>
+        <MonthlyHeatmap allBills={allBillsFlat} />
+        <div className="flex items-center gap-1.5 mt-2 justify-end">
+          <span className="text-[10px] text-slate-600">Less</span>
+          {[0.04, 0.2, 0.45, 0.65, 0.9].map((o, i) => (
+            <div key={i} className="size-2.5 rounded-sm" style={{ background: `rgba(16,185,129,${o})` }} />
+          ))}
+          <span className="text-[10px] text-slate-600">More</span>
+        </div>
+      </div>
+
+      {/* ── Recent Transactions ── */}
+      {recentTransactions.length > 0 && (
+        <div className="rounded-2xl border border-white/10 bg-[#111827] p-4">
+          <p className="text-[12px] font-semibold text-slate-300 uppercase tracking-wider mb-3">Recent payments</p>
+          <div className="space-y-1">
+            {recentTransactions.map((tx, i) => (
+              <div key={i} className="flex items-center justify-between py-2 border-b border-white/5 last:border-0">
+                <div className="min-w-0 flex-1 pr-3">
+                  <p className="text-[13px] text-white font-medium truncate">{tx.cardName}</p>
+                  <p className="text-[11px] text-slate-500">
+                    {tx.date ? new Date(tx.date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "2-digit" }) : "—"}
+                    {tx.note ? ` · ${tx.note}` : ""}
+                  </p>
+                </div>
+                <p className="text-[13px] font-semibold text-emerald-400 shrink-0">{formatCurrency(tx.amount)}</p>
+              </div>
+            ))}
           </div>
         </div>
       )}
 
-      {/* Configuration Modal */}
-      <Modal open={isConfigOpen} onClose={() => setConfigOpen(false)} title="📊 Generate Report">
-        <div className="flex flex-col gap-1.5 mb-4">
-          <label className="text-[12px] font-medium text-slate-400 uppercase tracking-wider">Report type</label>
-          <CustomSelect 
-            value={reportType} 
-            onChange={setReportType} 
-            options={[
-              { label: 'Monthly Summary', value: 'monthly' },
-              { label: 'All Transactions', value: 'all' },
-              { label: 'Per-Card History', value: 'card' },
-              { label: 'Yearly Overview', value: 'yearly' },
-              { label: 'Custom Date Range', value: 'custom' }
-            ]} 
-          />
+      {/* ── On-Time Rate Per Card ── */}
+      {cardSummaries.some(c => c.allBills.length >= 2) && (
+        <div className="rounded-2xl border border-white/10 bg-[#111827] p-4">
+          <p className="text-[12px] font-semibold text-slate-300 uppercase tracking-wider mb-3">On-time payment rate</p>
+          <div className="space-y-3">
+            {cardSummaries
+              .filter(c => c.allBills.length >= 1)
+              .sort((a, b) => b.onTimeRate - a.onTimeRate)
+              .map(cs => (
+                <div key={cs.card.id} className="flex items-center gap-3">
+                  <p className="text-[12px] text-slate-300 w-28 truncate shrink-0">{cs.card.name}</p>
+                  <div className="flex-1 h-2 rounded-full bg-white/5 overflow-hidden">
+                    <div
+                      className="h-full rounded-full"
+                      style={{
+                        width: `${cs.onTimeRate}%`,
+                        background: cs.onTimeRate >= 90 ? "#10b981" : cs.onTimeRate >= 70 ? "#f59e0b" : "#ef4444",
+                      }}
+                    />
+                  </div>
+                  <p className={`text-[12px] font-semibold w-10 text-right shrink-0 ${cs.onTimeRate >= 90 ? "text-emerald-400" : cs.onTimeRate >= 70 ? "text-amber-400" : "text-red-400"}`}>
+                    {cs.onTimeRate.toFixed(0)}%
+                  </p>
+                </div>
+              ))}
+          </div>
+          <p className="text-[10px] text-slate-600 mt-3">Based on fully paid statements — payment date vs due date</p>
         </div>
+      )}
 
-        {reportType === 'card' && (
-          <div className="flex flex-col gap-1.5 mb-4 animate-in fade-in slide-in-from-top-1">
-            <label className="text-[12px] font-medium text-slate-400 uppercase tracking-wider">Select Card</label>
-            <CustomSelect 
-              value={cardId} 
-              onChange={setCardId} 
-              options={cards.map(c => ({ label: c.name, value: c.id }))} 
-            />
-          </div>
-        )}
-
-        {reportType === 'monthly' && (
-          <div className="grid grid-cols-2 gap-3 mb-4 animate-in fade-in slide-in-from-top-1">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[12px] font-medium text-slate-400 uppercase tracking-wider">Month</label>
-              <CustomSelect 
-                value={month} 
-                onChange={setMonth} 
-                options={MONTHS.map((m, i) => ({ label: m, value: String(i) }))} 
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[12px] font-medium text-slate-400 uppercase tracking-wider">Year</label>
-              <div className="relative flex items-center">
-                <button type="button" onClick={() => setYear(String(parseInt(year) - 1))} className="absolute left-1 p-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-md transition-colors"><Minus className="size-3.5" /></button>
-                <input type="number" value={year} onChange={e => setYear(e.target.value)} className="bg-[#1a2234] border border-white/10 rounded-[10px] py-2.5 px-8 h-11 text-[14px] text-white text-center outline-none w-full [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none font-medium tracking-wide focus:ring-1 focus:ring-blue-500" />
-                <button type="button" onClick={() => setYear(String(parseInt(year) + 1))} className="absolute right-1 p-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-md transition-colors"><Plus className="size-3.5" /></button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {reportType === 'yearly' && (
-          <div className="flex flex-col gap-1.5 mb-4 animate-in fade-in slide-in-from-top-1">
-            <label className="text-[12px] font-medium text-slate-400 uppercase tracking-wider">Year</label>
-            <div className="relative flex items-center">
-              <button type="button" onClick={() => setYear(String(parseInt(year) - 1))} className="absolute left-1 p-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-md transition-colors"><Minus className="size-3.5" /></button>
-              <input type="number" value={year} onChange={e => setYear(e.target.value)} className="bg-[#1a2234] border border-white/10 rounded-[10px] py-2.5 px-8 h-11 text-[14px] text-white text-center outline-none w-full [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none font-medium tracking-wide focus:ring-1 focus:ring-blue-500" />
-              <button type="button" onClick={() => setYear(String(parseInt(year) + 1))} className="absolute right-1 p-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-md transition-colors"><Plus className="size-3.5" /></button>
-            </div>
-          </div>
-        )}
-
-        {reportType === 'custom' && (
-          <div className="grid grid-cols-2 gap-3 mb-4 animate-in fade-in slide-in-from-top-1">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[12px] font-medium text-slate-400 uppercase tracking-wider">From Date</label>
-              <CustomDatePicker value={fromDate} onChange={setFromDate} placeholder="Pick a date" />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[12px] font-medium text-slate-400 uppercase tracking-wider">To Date</label>
-              <CustomDatePicker value={toDate} onChange={setToDate} placeholder="Pick a date" />
-            </div>
-          </div>
-        )}
-
-        <div className="flex gap-2 mt-2 pt-4 border-t border-white/10">
-          <button type="button" onClick={() => setConfigOpen(false)} className="flex-1 bg-transparent border border-white/10 text-[13px] font-medium text-white hover:bg-white/5 h-11 rounded-[10px] transition-colors">Cancel</button>
-          <button type="button" onClick={generateReport} className="flex-1 bg-blue-500 border border-blue-500 hover:bg-blue-600 text-[13px] font-medium text-white h-11 rounded-[10px] transition-colors shadow-sm">Generate</button>
-        </div>
-      </Modal>
     </div>
   );
 }

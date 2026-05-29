@@ -1,66 +1,106 @@
 // src/components/dashboard/summary-cards.tsx
 "use client";
 
+import { useMemo } from "react";
 import { useVaultStore } from "@/stores/vault-store";
-import { getSummary, computeBillStatus } from "@/lib/engine/cards";
+import { getSummary, computeBillStatus, getDTD, getPaidTotal } from "@/lib/engine/cards";
 
 function formatINR(value: number) {
-  return new Intl.NumberFormat("en-IN", {
-    maximumFractionDigits: 0,
-  }).format(value);
+  if (value >= 100000) return `₹${(value / 100000).toFixed(1)}L`;
+  if (value >= 1000)   return `₹${(value / 1000).toFixed(1)}k`;
+  return `₹${Math.round(value)}`;
 }
 
 export function SummaryCards() {
   const cards = useVaultStore((s) => s.vault.cards);
   const summary = getSummary(cards);
 
-  // Calculate the actual number of pending bills across all un-disabled cards
-  const totalPendingBills = (cards || [])
-    .filter((c) => !c.disabled)
-    .flatMap((c) => c.activeBills || [])
-    .filter((bill) => computeBillStatus(bill) !== "paid").length;
+  // Count bills needing action (overdue or due ≤ 3 days)
+  const urgent = useMemo(() => {
+    return (cards || [])
+      .filter((c) => !c.disabled)
+      .flatMap((c) => c.activeBills || [])
+      .filter((b) => computeBillStatus(b) !== "paid" && b.billedAmount !== "" && getDTD(b) <= 3)
+      .length;
+  }, [cards]);
 
-  const items = [
-    {
-      label: "Billed",
-      value: "₹" + formatINR(summary.billed),
-      color: "text-white",
-    },
-    {
-      label: "Paid",
-      value: "₹" + formatINR(summary.paid),
-      color: "text-emerald-400",
-    },
-    {
-      label: "Outstanding",
-      value: "₹" + formatINR(summary.outstanding),
-      color: "text-red-400",
-    },
-    {
-      label: "Pending Bills",
-      value: String(totalPendingBills),
-      color: "text-orange-400",
-    },
-  ];
+  // Total outstanding (unpaid amount across bills with entered amounts)
+  const outstanding = summary.outstanding;
+
+  // Progress %
+  const pct = summary.billed > 0 ? Math.round((summary.paid / summary.billed) * 100) : 0;
+
+  // How much is genuinely due (not just total billed — only bills that have entered amounts)
+  const totalDue = useMemo(() => {
+    return (cards || [])
+      .filter((c) => !c.disabled)
+      .flatMap((c) => c.activeBills || [])
+      .filter((b) => computeBillStatus(b) !== "paid" && b.billedAmount !== "")
+      .reduce((s, b) => s + Math.max(0, Number(b.billedAmount || 0) - getPaidTotal(b)), 0);
+  }, [cards]);
 
   return (
-    <div className="grid grid-cols-2 gap-4 md:grid-cols-2 xl:grid-cols-4">
-      {items.map((item) => (
-        <div
-          key={item.label}
-          className="rounded-3xl border border-white/10 bg-[#111827] p-5"
-        >
-          <div className="text-xs uppercase tracking-wider text-slate-500">
-            {item.label}
-          </div>
-          <div
-            className={`mt-3 text-3xl md:text-4xl font-bold ${item.color}`}
-          >
-            {item.value}
+    <div className="rounded-3xl border border-white/10 bg-[#111827] px-5 py-4">
+      {/* Top row: key numbers */}
+      <div className="flex items-start justify-between mb-4">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-600 mb-1">Outstanding</p>
+          <p className={`text-3xl font-bold leading-none ${outstanding > 0 ? "text-red-400" : "text-emerald-400"}`}>
+            {formatINR(outstanding)}
+          </p>
+          {outstanding > 0 && (
+            <p className="text-[11px] text-slate-500 mt-1.5">
+              of {formatINR(summary.billed)} total billed
+            </p>
+          )}
+          {outstanding === 0 && summary.billed > 0 && (
+            <p className="text-[11px] text-emerald-400/70 mt-1.5">all paid up ✓</p>
+          )}
+        </div>
+
+        <div className="text-right">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-600 mb-1">Paid</p>
+          <p className="text-3xl font-bold leading-none text-emerald-400">{formatINR(summary.paid)}</p>
+          <p className="text-[11px] text-slate-500 mt-1.5">{pct}% cleared</p>
+        </div>
+      </div>
+
+      {/* Progress bar */}
+      {summary.billed > 0 && (
+        <div className="mb-3">
+          <div className="h-2 rounded-full bg-white/5 overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all duration-700"
+              style={{
+                width: `${pct}%`,
+                background: pct >= 100
+                  ? "#10b981"
+                  : pct >= 60
+                  ? "#f59e0b"
+                  : "#ef4444",
+              }}
+            />
           </div>
         </div>
-      ))}
+      )}
+
+      {/* Bottom row: contextual pills */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {urgent > 0 && (
+          <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-full bg-red-500/15 border border-red-500/20 text-red-400">
+            <span className="size-1.5 rounded-full bg-red-400 inline-block" />
+            {urgent} urgent
+          </span>
+        )}
+        <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded-full bg-white/5 border border-white/10 text-slate-400">
+          {cards.filter((c) => !c.disabled).length} active cards
+        </span>
+        {totalDue > 0 && (
+          <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded-full bg-white/5 border border-white/10 text-slate-400">
+            {formatINR(totalDue)} remaining
+          </span>
+        )}
+      </div>
     </div>
   );
 }
-
