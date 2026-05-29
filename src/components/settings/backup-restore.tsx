@@ -2,6 +2,7 @@
 
 import { useState, useRef } from "react";
 import { useVaultStore } from "@/stores/vault-store";
+import { useCurrencyStore } from "@/stores/currency-store";
 import { CheckCircle2, AlertCircle } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { encryptData, decryptData } from "@/lib/crypto/aes";
@@ -10,18 +11,21 @@ import { toBase64, fromBase64 } from "@/lib/crypto/encoding";
 
 export function BackupRestoreSettings() {
   const { user } = useAuth();
-  
+
   // Pull dual-vault state and setter from Zustand
   const vault = useVaultStore((state) => state.vault);
   const archiveVault = useVaultStore((state) => state.archiveVault);
   const secret = useVaultStore((state) => state.secret);
   const setVaults = useVaultStore((state) => state.setVaults);
 
+  // Currency store — needed to hydrate runtime state after a restore
+  const { setCurrency } = useCurrencyStore();
+
   const [pinInput, setPinInput] = useState("");
   const [showPinModal, setShowPinModal] = useState(false);
   const [action, setAction] = useState<"backup" | "restore" | null>(null);
   const [error, setError] = useState("");
-  
+
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -70,17 +74,17 @@ export function BackupRestoreSettings() {
 
       const salt = crypto.getRandomValues(new Uint8Array(16));
       const key = await deriveKey(user.email, salt);
-      
-      // Combine both vaults for the backup
+
+      // Combine both vaults for the backup — vault.currencyCode is included automatically
       const backupData = {
         vault,
-        archiveVault
+        archiveVault,
       };
 
       const { ciphertext, iv } = await encryptData(key, backupData);
 
       const backupPayload = {
-        version: 3, // Bumped to version 3 for dual-vault architecture
+        version: 3, // Version 3 = dual-vault architecture with currencyCode
         ciphertext,
         iv,
         salt: toBase64(salt.buffer as ArrayBuffer),
@@ -89,18 +93,18 @@ export function BackupRestoreSettings() {
       const data = JSON.stringify(backupPayload, null, 2);
       const blob = new Blob([data], { type: "application/json" });
       const url = URL.createObjectURL(blob);
-      
+
       const a = document.createElement("a");
       a.href = url;
-      
+
       const date = new Date().toISOString().split("T")[0];
       a.download = `duely-backup-${date}.duely`;
-      
+
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      
+
       showToast("Secure backup exported successfully.", "success");
     } catch (err) {
       console.error("Backup failed", err);
@@ -121,27 +125,26 @@ export function BackupRestoreSettings() {
       const text = await file.text();
       const parsedData = JSON.parse(text);
 
-      let vaultDataToRestore;
+      let vaultDataToRestore: any;
 
-      // Check if it's the new encrypted format (version 3)
+      // ── Version 3: Encrypted dual-vault with currencyCode ────────────────
       if (parsedData.version === 3 && parsedData.ciphertext) {
         if (!user?.email) {
           showToast("You must be logged in to restore a secure backup.", "error");
           return;
         }
-
         try {
           const salt = fromBase64(parsedData.salt);
           const key = await deriveKey(user.email, salt);
           vaultDataToRestore = await decryptData(key, parsedData.ciphertext, parsedData.iv);
-        } catch (decryptionError: any) {
+        } catch {
           showToast("Decryption failed. Ensure you are using the same email.", "error");
           return;
         }
-      } 
-      // Legacy Version 2
+      }
+      // ── Version 2: Encrypted single-vault (legacy) ───────────────────────
       else if (parsedData.version === 2 && parsedData.ciphertext) {
-         if (!user?.email) {
+        if (!user?.email) {
           showToast("You must be logged in to restore a secure backup.", "error");
           return;
         }
@@ -149,29 +152,43 @@ export function BackupRestoreSettings() {
           const salt = fromBase64(parsedData.salt);
           const key = await deriveKey(user.email, salt);
           vaultDataToRestore = await decryptData(key, parsedData.ciphertext, parsedData.iv);
-        } catch (decryptionError: any) {
+        } catch {
           showToast("Decryption failed.", "error");
           return;
         }
       }
+      // ── Fallback: unencrypted raw JSON (for testing / dummy data) ────────
       else {
-        // Fallback: Allows importing unencrypted raw JSON for testing/dummy data
         vaultDataToRestore = parsedData;
       }
 
-      // Route the restored data to the correct state structures
+      // ── Route restored data into the correct Zustand state ───────────────
+
       if (vaultDataToRestore.vault && vaultDataToRestore.archiveVault) {
-        // Version 3 Structure
+        // Version 3 structure: { vault: MainVaultData, archiveVault: {...} }
         setVaults(vaultDataToRestore.vault, vaultDataToRestore.archiveVault);
+
+        // ✅ Hydrate the runtime currency store from the restored vault.
+        // Falls back to INR for backups made before currency support was added.
+        const restoredCurrency = vaultDataToRestore.vault.currencyCode ?? "INR";
+        setCurrency(restoredCurrency);
+
         showToast("Dual-vault restored successfully!", "success");
       } else if (vaultDataToRestore.cards) {
-        // Legacy Version 2 Structure
-        setVaults({ cards: vaultDataToRestore.cards }, { archivedBills: vaultDataToRestore.archivedCards || [] });
+        // Version 2 / legacy structure: { cards: [...], archivedCards: [...] }
+        setVaults(
+          { cards: vaultDataToRestore.cards, currencyCode: vaultDataToRestore.currencyCode ?? "INR" },
+          { archivedBills: vaultDataToRestore.archivedCards || [] }
+        );
+
+        // ✅ Hydrate the runtime currency store.
+        // Legacy backups almost certainly won't have currencyCode, so default to INR.
+        setCurrency(vaultDataToRestore.currencyCode ?? "INR");
+
         showToast("Legacy vault restored successfully!", "success");
       } else {
         throw new Error("Invalid vault data structure");
       }
-
     } catch (err: any) {
       console.error(err);
       showToast("Failed to restore data. File may be corrupted.", "error");
@@ -197,12 +214,17 @@ export function BackupRestoreSettings() {
 
       <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 p-4 text-sm text-blue-400">
         <h4 className="font-semibold mb-1 flex items-center gap-2">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
           Encrypted Backup
         </h4>
         <p>
-          Local backups are exported as <code className="bg-blue-500/20 px-1 rounded">.duely</code> files.
-          <strong> These files are securely encrypted</strong> using your current account email <span className="font-medium text-blue-300">({user?.email || "not logged in"})</span>.
+          Local backups are exported as{" "}
+          <code className="bg-blue-500/20 px-1 rounded">.duely</code> files.
+          <strong> These files are securely encrypted</strong> using your current account email{" "}
+          <span className="font-medium text-blue-300">({user?.email || "not logged in"})</span>.
         </p>
       </div>
 
@@ -232,9 +254,7 @@ export function BackupRestoreSettings() {
       {showPinModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
           <div className="w-full max-w-sm rounded-xl border border-neutral-800 bg-[#020817] p-6 shadow-2xl">
-            <h3 className="text-lg font-semibold text-white mb-2">
-              Enter Master PIN
-            </h3>
+            <h3 className="text-lg font-semibold text-white mb-2">Enter Master PIN</h3>
             <p className="text-sm text-neutral-400 mb-4">
               Please verify your identity to authorize this {action} operation.
             </p>
@@ -250,7 +270,7 @@ export function BackupRestoreSettings() {
                 autoFocus
               />
               {error && <p className="text-sm text-red-500 text-center">{error}</p>}
-              
+
               <div className="flex justify-end gap-3 mt-6">
                 <button
                   type="button"

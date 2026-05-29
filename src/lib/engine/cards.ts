@@ -20,6 +20,25 @@ export function formatCurrency(amount: number | string) {
   }).format(num);
 }
 
+// --- BILL ID GENERATION ---
+//
+// Format: <cardId>-<YYYYMMDD>-<BASE36_TIMESTAMP><4_RAND_CHARS>
+//
+// Examples:
+//   c-hdfc-20260513-M5X3KAB2
+//   c-idfc-20260509-M5X1JC7F
+//
+// The base-36 millisecond timestamp ensures IDs generated even in the same
+// second are highly unlikely to collide; the 4 random chars add an extra
+// ~1.6 million combinations on top.
+//
+function genBillId(cardId: string, dateStr: string): string {
+  const datePart = dateStr.replace(/-/g, "");                         // YYYYMMDD
+  const tsPart   = Date.now().toString(36).toUpperCase();              // e.g. "M5X3K"
+  const randPart = Math.random().toString(36).slice(2, 6).toUpperCase(); // e.g. "AB2F"
+  return `${cardId}-${datePart}-${tsPart}${randPart}`;
+}
+
 // --- BILL CYCLE LOGIC ---
 
 export function getNextExpectedBillDate(card: CreditCard): Date {
@@ -56,7 +75,7 @@ export function spawnMissingBills(card: CreditCard): CreditCard {
   if (!billExists) {
     const dueDate = getExactDueDate(nextExpected, card.dueAfterDays);
     const newBill: BillCycle = {
-      id: `${card.id}-${dateStr.replace(/-/g, '')}`,
+      id: genBillId(card.id, dateStr),
       cardId: card.id,
       statementDate: dateStr,
       dueDate: dueDate.toISOString().split('T')[0],
@@ -189,4 +208,24 @@ export function getNextBillDate(card: CreditCard): Date {
   
   // If the billing day passed, the next bill is next month
   return new Date(currentYear, currentMonth + 1, card.billDay);
+}
+
+// Legacy compatibility alias (used in dashboard.ts)
+export function isActive(card: CreditCard): boolean {
+  return !card.disabled;
+}
+
+export function computeStatus(card: CreditCard): PaymentStatus {
+  const allBills = card.activeBills || [];
+  if (allBills.length === 0) return 'paid';
+  const unpaid = allBills.find(b => computeBillStatus(b) !== 'paid');
+  return unpaid ? computeBillStatus(unpaid) : 'paid';
+}
+
+export function sortByDue(cards: CreditCard[]): CreditCard[] {
+  return [...cards].sort((a, b) => {
+    const aDate = a.activeBills?.[0]?.dueDate ?? '';
+    const bDate = b.activeBills?.[0]?.dueDate ?? '';
+    return aDate.localeCompare(bDate);
+  });
 }

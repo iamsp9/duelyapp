@@ -15,9 +15,23 @@ function CardHistoryRow({ card, archivedBills }: { card: CreditCard; archivedBil
   const [page, setPage] = useState(1);
   const limit = 5;
 
-  const allBills = [...(card.activeBills || []), ...archivedBills.filter((b) => b.cardId === card.id)].sort(
-    (a, b) => new Date(b.statementDate).getTime() - new Date(a.statementDate).getTime()
-  );
+  // Deduplicate by bill ID before rendering — prevents the React duplicate-key
+  // warning that occurs when the same bill exists in both activeBills and
+  // archivedBills (e.g. if a paid bill wasn't fully cleaned from activeBills).
+  const seen = new Set<string>();
+  const allBills = [
+    ...(card.activeBills || []),
+    ...archivedBills.filter((b) => b.cardId === card.id),
+  ]
+    .filter((b) => {
+      if (seen.has(b.id)) return false;
+      seen.add(b.id);
+      return true;
+    })
+    .sort(
+      (a, b) =>
+        new Date(b.statementDate).getTime() - new Date(a.statementDate).getTime()
+    );
 
   const totalPages = Math.max(1, Math.ceil(allBills.length / limit));
   const paginated = allBills.slice((page - 1) * limit, page * limit);

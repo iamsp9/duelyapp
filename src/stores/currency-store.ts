@@ -11,15 +11,15 @@ export interface CurrencyOption {
 }
 
 export const CURRENCIES: CurrencyOption[] = [
-  { code: "INR", symbol: "₹", label: "Indian Rupee (₹)", locale: "en-IN" },
-  { code: "USD", symbol: "$", label: "US Dollar ($)", locale: "en-US" },
-  { code: "EUR", symbol: "€", label: "Euro (€)", locale: "de-DE" },
-  { code: "GBP", symbol: "£", label: "British Pound (£)", locale: "en-GB" },
-  { code: "AED", symbol: "د.إ", label: "UAE Dirham (د.إ)", locale: "ar-AE" },
-  { code: "SGD", symbol: "S$", label: "Singapore Dollar (S$)", locale: "en-SG" },
-  { code: "CAD", symbol: "CA$", label: "Canadian Dollar (CA$)", locale: "en-CA" },
-  { code: "AUD", symbol: "A$", label: "Australian Dollar (A$)", locale: "en-AU" },
-  { code: "JPY", symbol: "¥", label: "Japanese Yen (¥)", locale: "ja-JP" },
+  { code: "INR", symbol: "₹",    label: "Indian Rupee (₹)",       locale: "en-IN" },
+  { code: "USD", symbol: "$",    label: "US Dollar ($)",           locale: "en-US" },
+  { code: "EUR", symbol: "€",    label: "Euro (€)",                locale: "de-DE" },
+  { code: "GBP", symbol: "£",    label: "British Pound (£)",       locale: "en-GB" },
+  { code: "AED", symbol: "د.إ",  label: "UAE Dirham (د.إ)",        locale: "ar-AE" },
+  { code: "SGD", symbol: "S$",   label: "Singapore Dollar (S$)",   locale: "en-SG" },
+  { code: "CAD", symbol: "CA$",  label: "Canadian Dollar (CA$)",   locale: "en-CA" },
+  { code: "AUD", symbol: "A$",   label: "Australian Dollar (A$)",  locale: "en-AU" },
+  { code: "JPY", symbol: "¥",    label: "Japanese Yen (¥)",        locale: "ja-JP" },
 ];
 
 interface CurrencyStore {
